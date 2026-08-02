@@ -4,9 +4,6 @@ on:
   schedule: # 定时任务
     - cron: "0 1 * * *" # 每天 1:00 UTC（对应北京时间 9:00）
 
-permissions:
-  actions: write
-
 jobs:
   run-main:
     timeout-minutes: 20
@@ -86,7 +83,7 @@ jobs:
       - name: Auto retry once
         if: steps.review.outcome == 'failure' && github.run_attempt == 1
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SPARKFLOW_PAT }}
         run: |
           echo "Review 发现问题，自动重试整个运行一次"
           gh run rerun ${{ github.run_id }} --failed || gh run rerun ${{ github.run_id }}
