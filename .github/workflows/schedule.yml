@@ -3,7 +3,6 @@ on:
   workflow_dispatch: # 允许手动触发
   schedule: # 定时任务
     - cron: "0 1 * * *" # 每天 1:00 UTC（对应北京时间 9:00）
-
 jobs:
   run-main:
     timeout-minutes: 20
@@ -43,39 +42,3 @@ jobs:
       actions: write
     steps:
       - uses: liskin/gh-workflow-keepalive@v1
-
-  review:
-    # 发送完成后的双重校验：下载日志确认确实发送成功；异常时自动重试一次
-    if: always()
-    needs: run-main
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: user-data
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download run logs
-        uses: actions/download-artifact@v4
-        with:
-          name: run-logs
-          path: logs
-          run-id: ${{ github.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-      - name: Review send result
-        id: review
-        env:
-          TASKS: ${{ vars.TASKS }}
-          MAIN_RESULT: ${{ needs.run-main.result }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
-        run: |
-          EXPECTED=$(python3 - <<'PY'
-          import json, os
-          tasks = json.loads(os.environ.get("TASKS", "[]"))
-          print(sum(len(t.get("targets", [])) for t in tasks))
-          PY
-          )
-          python utils/review_run.py --main-result "$MAIN_RESULT" --logs-dir logs --expected "$EXPECTED"
