@@ -66,16 +66,25 @@ def retry_operation(name, operation, retries=3, delay=2, *args, **kwargs):
 
 
 def _snapshot_on_failure(page, username, stage):
-    """失败时记录现场：当前 URL、页面标题、截图（截图随 logs/ 一起上传到 artifact）"""
+    """失败时记录现场：当前 URL、页面标题、正文文本、截图（随 logs/ 一起上传）"""
     try:
         os.makedirs("logs/screenshots", exist_ok=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in username)
         fname = f"logs/screenshots/{safe_name}_{stage}_{timestamp}.png"
         page.screenshot(path=fname)
+        page_text = ""
+        try:
+            page_text = page.locator("body").inner_text(timeout=5000)[:2000]
+        except Exception:
+            pass
+        txt_fname = f"logs/screenshots/{safe_name}_{stage}_{timestamp}.txt"
+        with open(txt_fname, "w", encoding="utf-8") as f:
+            f.write(f"URL: {page.url}\n标题: {page.title()}\n\n正文:\n{page_text}\n")
+        preview = page_text.replace("\n", " | ")[:600]
         logger.warning(
             f"账号 {username} [{stage}] 现场快照已保存: URL={page.url}, "
-            f"标题={page.title()}, 截图={fname}"
+            f"标题={page.title()}, 截图={fname}, 正文片段: {preview}"
         )
     except Exception as e:
         logger.warning(f"账号 {username} [{stage}] 保存现场快照失败: {e}")
