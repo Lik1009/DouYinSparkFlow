@@ -63,7 +63,6 @@ jobs:
         continue-on-error: true
       - name: Review send result
         id: review
-        continue-on-error: true
         env:
           TASKS: ${{ vars.TASKS }}
           MAIN_RESULT: ${{ needs.run-main.result }}
@@ -80,16 +79,3 @@ jobs:
           PY
           )
           python utils/review_run.py --main-result "$MAIN_RESULT" --logs-dir logs --expected "$EXPECTED"
-      - name: Auto retry once
-        # 审批过的运行 attempt 从 2 开始，因此用 <=2 表示“首次执行”；重试后 >=3 则终止
-        if: steps.review.outcome == 'failure' && github.run_attempt <= 2
-        env:
-          GH_TOKEN: ${{ secrets.SPARKFLOW_PAT }}
-        run: |
-          echo "Review 发现问题，自动重试整个运行一次"
-          gh run rerun ${{ github.run_id }} --failed || gh run rerun ${{ github.run_id }}
-      - name: Fail on repeated problem
-        if: steps.review.outcome == 'failure' && github.run_attempt >= 3
-        run: |
-          echo "连续两次检查未通过，请人工查看日志"
-          exit 1
