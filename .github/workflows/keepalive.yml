@@ -26,4 +26,9 @@ jobs:
         env:
           COOKIES_SAKURO_MAI: ${{ secrets.COOKIES_SAKURO_MAI }}
           SPARKFLOW_PAT: ${{ secrets.SPARKFLOW_PAT }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
         run: python utils/cookie_keepalive.py

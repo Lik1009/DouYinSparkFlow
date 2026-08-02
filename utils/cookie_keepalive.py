@@ -10,7 +10,11 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from playwright.sync_api import sync_playwright
+
+from utils.notify import COOKIE_EXPIRED_SUBJECT, build_cookie_expired_body, send_email
 
 LOGIN_MARKERS = ["扫码登录", "验证码登录", "密码登录"]
 TARGET = "https://www.douyin.com/chat"
@@ -67,6 +71,14 @@ def main():
             pass
         if any(m in body for m in LOGIN_MARKERS):
             log("登录已失效，无法续期（需要重新导出 cookies 并更新密钥）")
+            send_email(
+                COOKIE_EXPIRED_SUBJECT,
+                build_cookie_expired_body(
+                    f"https://github.com/Luolingli/DouYinSparkFlow/actions/runs/{os.getenv('GITHUB_RUN_ID', '')}"
+                    if os.getenv("GITHUB_RUN_ID")
+                    else ""
+                ),
+            )
             browser.close()
             sys.exit(1)
         page.wait_for_timeout(30000)  # 停留触发心跳/会话刷新
@@ -88,22 +100,22 @@ def main():
 
     env = dict(os.environ)
     env["GH_TOKEN"] = pat
-    subprocess.run(
-        [
-            "gh",
-            "secret",
-            "set",
-            SECRET_NAME,
-            "--env",
-            ENV_NAME,
-            "--repo",
-            REPO,
-            "--body-file",
-            tmp,
-        ],
-        env=env,
-        check=True,
-    )
+    with open(tmp, "rb") as f:
+        subprocess.run(
+            [
+                "gh",
+                "secret",
+                "set",
+                SECRET_NAME,
+                "--env",
+                ENV_NAME,
+                "--repo",
+                REPO,
+            ],
+            env=env,
+            check=True,
+            stdin=f,
+        )
     log(f"已回写 {len(fresh)} 个 cookies 到 {ENV_NAME}/{SECRET_NAME}")
 
 
