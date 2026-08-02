@@ -292,6 +292,22 @@ def do_user_task(browser, username, cookies, targets):
             url="https://creator.douyin.com/creator-micro/data/following/chat",
         )
 
+        # 快速检查登录态：未登录时页面会渲染创作者登录落地页，此时无需继续等待选择器
+        try:
+            time.sleep(3)
+            body_text = page.locator("body").inner_text(timeout=5000)
+            if "创作者登录" in body_text or "我是创作者" in body_text:
+                _snapshot_on_failure(page, username, "未登录检测")
+                raise RuntimeError(
+                    f"账号 {username} 未检测到登录态（页面显示创作者登录入口），"
+                    "Cookies 可能已过期或被风控拒绝，请重新导出并更新 COOKIES_SAKURO_MAI 密钥"
+                )
+            logger.debug(f"账号 {username} 登录态检查通过")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            logger.debug(f"账号 {username} 登录态检查跳过（{e}），交给后续选择器判断")
+
         logger.info(f"账号 {username} 开始执行消息任务")
         # 滚动并选择用户
         for friend_name in scroll_and_select_user(page, username, targets):
