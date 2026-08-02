@@ -6,6 +6,7 @@ from core.browser import get_browser
 from playwright.sync_api import Response
 import time
 import json
+import os
 
 
 complates = {}
@@ -64,6 +65,44 @@ def retry_operation(name, operation, retries=3, delay=2, *args, **kwargs):
                 raise
 
 
+def _snapshot_on_failure(page, username, stage):
+    """失败时记录现场：当前 URL、页面标题、截图（截图随 logs/ 一起上传到 artifact）"""
+    try:
+        os.makedirs("logs/screenshots", exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in username)
+        fname = f"logs/screenshots/{safe_name}_{stage}_{timestamp}.png"
+        page.screenshot(path=fname)
+        logger.warning(
+            f"账号 {username} [{stage}] 现场快照已保存: URL={page.url}, "
+            f"标题={page.title()}, 截图={fname}"
+        )
+    except Exception as e:
+        logger.warning(f"账号 {username} [{stage}] 保存现场快照失败: {e}")
+
+
+def wait_and_click_with_retry(page, username, stage, selector, retries=3, timeout=30000, click=True):
+    """等待元素（可选点击），失败时记录现场并刷新页面重试"""
+    for attempt in range(1, retries + 1):
+        try:
+            page.wait_for_selector(selector, timeout=timeout)
+            if click:
+                page.locator(selector).click()
+            return
+        except Exception as e:
+            _snapshot_on_failure(page, username, f"{stage}-第{attempt}次")
+            logger.warning(
+                f"账号 {username} [{stage}] 第 {attempt} 次尝试失败: {e}，刷新页面重试"
+            )
+            try:
+                page.reload(wait_until="domcontentloaded")
+            except Exception:
+                pass
+            time.sleep(2)
+    _snapshot_on_failure(page, username, f"{stage}-重试耗尽")
+    raise TimeoutError(f"账号 {username} [{stage}] 重试 {retries} 次后仍失败")
+
+
 def scroll_and_select_user(page, username, targets):
     """尝试滚动并查找用户名"""
     # 定义目标元素和滚动容器的选择器
@@ -80,16 +119,15 @@ def scroll_and_select_user(page, username, targets):
     logger.debug(f"账号 {username} 目标好友列表: {targets}")
 
     logger.debug(f"账号 {username} 点击进入好友标签页")
-    # 点击好友标签页
-    page.wait_for_selector(friends_tab_selector)
-    page.locator(friends_tab_selector).click()
+    # 点击好友标签页（偶发页面加载异常时自动刷新重试）
+    wait_and_click_with_retry(page, username, "好友标签", friends_tab_selector)
 
     logger.debug(f"账号 {username} 进入好友列表页面")
 
     # 确保第一个好友元素加载完成
     first_friend_selector = 'xpath=//*[@id="sub-app"]/div/div/div[2]/div[2]/div/div/div[1]/div/div/div/ul/div/div/div[1]/li/div'
-    page.wait_for_selector(first_friend_selector)
-    page.locator(first_friend_selector).click()  # 点击第一个好友，确保列表激活
+    # 点击第一个好友，确保列表激活（同样带刷新重试）
+    wait_and_click_with_retry(page, username, "好友列表第一项", first_friend_selector)
 
     logger.debug(f"账号 {username} 已激活好友列表，开始滚动查找目标好友")
 
@@ -130,6 +168,7 @@ def scroll_and_select_user(page, username, targets):
                     targetSymbol = targetName
 
                 if targetSymbol in targets:
+                    logger.info(f"账号 {username} 命中目标好友 {targetName}")
                     element.click()
                     if matchMode == "short_id":
                         logger.debug(
@@ -244,13 +283,17 @@ def do_user_task(browser, username, cookies, targets):
             url="https://creator.douyin.com/creator-micro/data/following/chat",
         )
 
-        logger.debug(f"账号 {username} 开始发送消息")
+        logger.info(f"账号 {username} 开始执行消息任务")
         # 滚动并选择用户
-        for username in scroll_and_select_user(page, username, targets):
-            logger.debug(f"账号 {username} 已选中好友 {username} 发送消息")
+        for friend_name in scroll_and_select_user(page, username, targets):
+            logger.debug(f"账号 {username} 已选中好友 {friend_name}，准备输入消息")
             # 等待聊天输入框元素加载完成，使用更稳定的属性选择器
             chat_input_selector = "xpath=//div[contains(@class, 'chat-input-')]"
-            page.wait_for_selector(chat_input_selector, timeout=config["browserTimeout"])
+            try:
+                page.wait_for_selector(chat_input_selector, timeout=config["browserTimeout"])
+            except Exception:
+                _snapshot_on_failure(page, username, f"聊天输入框-{friend_name}")
+                raise
             chat_input = page.locator(chat_input_selector)
 
             # 在 chat-input-dccKiL 中输入内容
@@ -261,13 +304,12 @@ def do_user_task(browser, username, cookies, targets):
                 if line != message.split("\\n")[-1]:
                     chat_input.press("Shift+Enter")  # 模拟 Shift+Enter 插入换行
 
-            logger.debug(
-                f"账号 {username} 准备发送消息给好友 {username}：\n\t{message}"
-            )
-            logger.debug(f"账号 {username} 给好友 {username} 发送消息完成")
+            logger.info(f"账号 {username} 向好友 {friend_name} 输入消息: {message}")
             # 模拟按下回车键发送消息
             chat_input.press("Enter")
             time.sleep(2)  # 发送完等待一会儿
+            _snapshot_on_failure(page, username, f"发送后-{friend_name}")
+            logger.info(f"账号 {username} 已向好友 {friend_name} 发送消息")
 
         context.close()  # 任务完成后关闭上下文
 
@@ -300,4 +342,3 @@ def runTasks():
         playwright.stop()
 
         
-

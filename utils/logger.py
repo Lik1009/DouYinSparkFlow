@@ -12,25 +12,34 @@ LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d -
 # 日志文件路径
 LOG_FILE = "logs/app.log"
 
+_LEVEL_MAP = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL,
+}
+
+
+def _normalize_level(level):
+    """兼容字符串和数字两种级别写法，未知字符串回退为 INFO"""
+    if isinstance(level, str):
+        return _LEVEL_MAP.get(level.strip().lower(), logging.INFO)
+    if isinstance(level, int):
+        return level
+    return logging.INFO
+
+
 # 配置日志
 def setup_logger(name="app", level="Info"):
     """
     配置日志记录器
     :param name: 日志记录器名称
-    :param level: 日志级别
+    :param level: 日志级别（字符串或 logging 常量）
     :return: 配置好的日志记录器
     """
-    if level == "Debug":
-        level = logging.DEBUG
-    elif level == "Info":
-        level = logging.INFO
-    elif level == "Warning":
-        level = logging.WARNING
-    elif level == "Error":
-        level = logging.ERROR
-    else:
-        level = logging.INFO
-    
+    level = _normalize_level(level)
+
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
@@ -51,6 +60,10 @@ def setup_logger(name="app", level="Info"):
         # 添加处理器到日志记录器
         logger.addHandler(console_handler)
         logger.addHandler(file_handler)
+    else:
+        # 已有处理器时也要同步级别，避免 config 模块提前初始化把级别固定住
+        for handler in logger.handlers:
+            handler.setLevel(level)
 
     return logger
 
