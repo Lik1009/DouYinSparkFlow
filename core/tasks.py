@@ -161,6 +161,7 @@ def scroll_and_select_user(page, username, targets):
 
     found_targets = set()
     tried_ids = set()
+    sent_targets = set()
     remaining_targets = set(targets)
     empty_scroll_count = 0
     MAX_EMPTY_SCROLLS = 10
@@ -187,6 +188,11 @@ def scroll_and_select_user(page, username, targets):
                     targetSymbol = check_target_name(targetName, targets)
 
                 if targetSymbol:
+                    if targetSymbol in sent_targets:
+                        # 已发送过，防止重复发送
+                        found_targets.add(targetName)
+                        break
+                    sent_targets.add(targetSymbol)
                     logger.info(f"账号 {username} 命中目标好友 {targetName}")
                     element.click()
                     yield targetSymbol
@@ -196,6 +202,7 @@ def scroll_and_select_user(page, username, targets):
                     if len(remaining_targets) == 0:
                         logger.debug(f"账号 {username} 所有目标好友均已找到，停止搜索")
                         return
+                    found_targets.add(targetName)
                     break
                 if targetName in found_targets:
                     continue
@@ -276,7 +283,13 @@ def do_user_task(browser, username, cookies, targets):
         logger.debug(f"账号 {username} 登录态检查跳过（{e}），交给后续选择器判断")
 
     logger.info(f"账号 {username} 开始执行消息任务")
+    sent_count = 0
     for friend_name in scroll_and_select_user(page, username, targets):
+        sent_count += 1
+        if sent_count > len(targets):
+            logger.error(f"账号 {username} 发送次数({sent_count})超过目标数({len(targets)})，强制终止")
+            _snapshot_on_failure(page, username, "发送次数异常")
+            raise RuntimeError(f"账号 {username} 发送次数异常，强制终止")
         logger.debug(f"账号 {username} 已选中好友 {friend_name}，准备输入消息")
         chat_input_selector = CHAT_EDITOR_SELECTOR
         try:
