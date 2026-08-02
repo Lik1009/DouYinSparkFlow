@@ -38,9 +38,21 @@ def handle_response(response: Response):
                 short_id = item.get("short_id")
                 unique_id = item.get("unique_id")
                 sec_uid = item.get("sec_uid", "")
+                uid = str(item.get("uid", ""))
                 nickname = norm(item.get("nickname"))
                 remark_name = norm(item.get("remark_name", nickname))
-                userIDDict[remark_name] = [short_id, unique_id, sec_uid, nickname, remark_name]
+                info = [short_id, unique_id, sec_uid, nickname, remark_name, uid]
+                # 用所有标识符建立索引：备注/昵称/uid/short_id/抖音号/sec_uid
+                for key in {
+                    remark_name,
+                    nickname,
+                    uid,
+                    str(short_id) if short_id else "",
+                    str(unique_id) if unique_id else "",
+                    sec_uid,
+                }:
+                    if key:
+                        userIDDict[key] = info
         except Exception as e:
             tb = traceback.extract_tb(e.__traceback__)
             last = tb[-1]
@@ -141,7 +153,14 @@ def scroll_and_select_user(page, username, targets):
         logger.warning(f"账号 {username} 会话列表为空，无可发送对象")
         return
 
+    # 等待会话用户信息接口返回，让标题可被解析（最多约 20 秒）
+    for _ in range(10):
+        if userIDDict:
+            break
+        time.sleep(2)
+
     found_targets = set()
+    tried_ids = set()
     remaining_targets = set(targets)
     empty_scroll_count = 0
     MAX_EMPTY_SCROLLS = 10
@@ -155,12 +174,17 @@ def scroll_and_select_user(page, username, targets):
                 span = element.locator(CONVERSATION_TITLE_SELECTOR)
                 targetName = span.inner_text()
 
-                if targetName in found_targets:
-                    continue
-                found_targets.add(targetName)
-
-                logger.debug(f"账号 {username} 找到会话 {targetName}")
                 targetSymbol = check_target_name(targetName, targets)
+                if not targetSymbol and targetName.isdigit() and targetName not in tried_ids:
+                    # 数字标题：用户信息尚未解析，点击会话触发加载后重试匹配
+                    tried_ids.add(targetName)
+                    element.click()
+                    time.sleep(2.5)
+                    try:
+                        targetName = span.inner_text()
+                    except Exception:
+                        pass
+                    targetSymbol = check_target_name(targetName, targets)
 
                 if targetSymbol:
                     logger.info(f"账号 {username} 命中目标好友 {targetName}")
@@ -173,6 +197,10 @@ def scroll_and_select_user(page, username, targets):
                         logger.debug(f"账号 {username} 所有目标好友均已找到，停止搜索")
                         return
                     break
+                if targetName in found_targets:
+                    continue
+                found_targets.add(targetName)
+                logger.debug(f"账号 {username} 找到会话 {targetName}")
             except Exception as e:
                 traceback.print_exc()
         else:
