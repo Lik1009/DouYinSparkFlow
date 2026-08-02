@@ -1,0 +1,44 @@
+name: DouYin Send Review
+
+on:
+  workflow_run:
+    workflows: ["DouYin Spark Flow Schedule Run"]
+    types: [completed]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: user-data
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download run logs
+        uses: actions/download-artifact@v4
+        with:
+          name: run-logs
+          path: logs
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+      - name: Review send result
+        env:
+          TASKS: ${{ vars.TASKS }}
+          MAIN_RESULT: ${{ github.event.workflow_run.conclusion }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+        run: |
+          # 未实际执行的运行（action_required/cancelled 等）不 review
+          if [ "$MAIN_RESULT" != "success" ] && [ "$MAIN_RESULT" != "failure" ]; then
+            echo "运行未实际执行（$MAIN_RESULT），跳过 review"
+            exit 0
+          fi
+          EXPECTED=$(python3 - <<'PY'
+          import json, os
+          tasks = json.loads(os.environ.get("TASKS", "[]"))
+          print(sum(len(t.get("targets", [])) for t in tasks))
+          PY
+          )
+          python utils/review_run.py --main-result "$MAIN_RESULT" --logs-dir logs --expected "$EXPECTED"

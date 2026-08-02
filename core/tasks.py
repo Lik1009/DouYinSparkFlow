@@ -312,6 +312,7 @@ def do_user_task(browser, username, cookies, targets):
         logger.info(f"账号 {username} 已向好友 {friend_name} 发送消息")
 
     context.close()
+    return sent_count
 
 
 def runTasks():
@@ -329,8 +330,15 @@ def runTasks():
             targets = user["targets"]
             username = user.get("username", "未知用户")
             logger.info(f"开始处理账号 {username}")
-            do_user_task(browser, username, cookies, targets)
-            logger.info(f"账号 {username} 任务完成")
+            sent = do_user_task(browser, username, cookies, targets)
+            logger.info(f"账号 {username} 任务完成，共发送 {sent} 条消息")
+            # review 自检：配置了目标但一条都没发出去 → 判定失败，避免“静默没发”
+            if targets and sent == 0:
+                logger.error(
+                    f"账号 {username} 配置了 {len(targets)} 个目标好友但发送数为 0，"
+                    "判定为异常（请查看上方日志中未找到的好友列表）"
+                )
+                raise RuntimeError(f"账号 {username} 发送数为 0，未发出任何消息")
     finally:
         browser.close()
         playwright.stop()
