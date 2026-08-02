@@ -1,0 +1,29 @@
+name: DouYin Cookie Keepalive
+
+on:
+  schedule:
+    # 每 12 小时一次（UTC 00:23 / 12:23，即北京时间 08:23 / 20:23）
+    - cron: "23 */12 * * *"
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: user-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+      - name: Ensure browsers are installed
+        run: playwright install chromium --with-deps --only-shell
+      - name: Refresh and roll cookies
+        env:
+          COOKIES_SAKURO_MAI: ${{ secrets.COOKIES_SAKURO_MAI }}
+          SPARKFLOW_PAT: ${{ secrets.SPARKFLOW_PAT }}
+        run: python utils/cookie_keepalive.py
