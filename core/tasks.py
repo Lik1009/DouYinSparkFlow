@@ -374,17 +374,21 @@ def runTasks():
         logger.debug(f"消息模板: {config.get('messageTemplate', '未找到消息模板')}")
         logger.debug(f"一言类型: {config['hitokotoTypes']}")
 
-        # 调试模式：OVERRIDE_TARGETS 覆盖目标（只发给指定好友，默认 zjj 和 Eve）
+        # 调试模式：DEBUG_TARGETS（仓库变量）或 OVERRIDE_TARGETS（环境变量）覆盖目标，
+        # 只发给指定好友（默认 zjj 和 Eve），生产运行不受影响
         override_targets = None
-        override_raw = os.getenv("OVERRIDE_TARGETS", "").strip()
+        override_raw = os.getenv("OVERRIDE_TARGETS", "").strip() or os.getenv("DEBUG_TARGETS", "").strip()
         if override_raw:
             try:
                 override_targets = json.loads(override_raw)
                 logger.info(f"调试模式：仅发送给 {override_targets}")
             except Exception as e:
-                logger.warning(f"OVERRIDE_TARGETS 解析失败，忽略: {e}")
+                logger.warning(f"DEBUG_TARGETS/OVERRIDE_TARGETS 解析失败，忽略: {e}")
 
-        bypass_daily_dedup = os.getenv("BYPASS_DAILY_DEDUP", "").strip().lower() in ("1", "true", "yes")
+        bypass_daily_dedup = (
+            os.getenv("BYPASS_DAILY_DEDUP", "").strip()
+            or os.getenv("DEBUG_BYPASS_DEDUP", "").strip()
+        ).lower() in ("1", "true", "yes")
         if bypass_daily_dedup:
             logger.info("调试模式：绕过当天去重（可多轮测试）")
 
