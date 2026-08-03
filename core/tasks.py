@@ -21,6 +21,8 @@ CONVERSATION_ITEM_SELECTOR = ".conversationConversationItemwrapper"
 CONVERSATION_TITLE_SELECTOR = ".conversationConversationItemtitle"
 CONVERSATION_LIST_SELECTOR = ".conversationConversationListwrapper"
 CHAT_EDITOR_SELECTOR = ".messageEditorimChatEditorContainer"
+CONVERSATION_TIME_SELECTOR = ".ConversationItemTagNextToTitletimeStr"
+CONVERSATION_SNIPPET_SELECTOR = ".ConversationItemDeschintWrapper"
 
 # 未登录时页面会出现的关键字
 LOGIN_MARKERS = ["扫码登录", "验证码登录", "密码登录"]
@@ -139,7 +141,7 @@ def check_target_name(targetName, targets):
     return None
 
 
-def scroll_and_select_user(page, username, targets):
+def scroll_and_select_user(page, username, targets, stats):
     """在 www.douyin.com/chat 会话列表中滚动查找目标好友"""
     target_selector = CONVERSATION_ITEM_SELECTOR
     scrollable_friends_selector = CONVERSATION_LIST_SELECTOR
@@ -200,6 +202,22 @@ def scroll_and_select_user(page, username, targets):
                 if targetSymbol:
                     if targetSymbol in sent_targets:
                         # 已发送过，防止重复发送
+                        found_targets.add(targetName)
+                        continue
+                    # 当天幂等：会话最后一条消息已是今天发送的火花消息则跳过
+                    try:
+                        time_str = element.locator(CONVERSATION_TIME_SELECTOR).inner_text(timeout=2000)
+                        snippet = element.locator(CONVERSATION_SNIPPET_SELECTOR).inner_text(timeout=2000)
+                    except Exception:
+                        time_str, snippet = "", ""
+                    already_today = (
+                        "今日火花" in snippet
+                        and "昨天" not in time_str
+                        and "前天" not in time_str
+                    )
+                    if already_today:
+                        stats["skipped"] += 1
+                        logger.info(f"账号 {username} 好友 {targetName} 今天已发送过，跳过")
                         found_targets.add(targetName)
                         continue
                     sent_targets.add(targetSymbol)
@@ -296,11 +314,11 @@ def do_user_task(browser, username, cookies, targets):
         logger.debug(f"账号 {username} 登录态检查跳过（{e}），交给后续选择器判断")
 
     logger.info(f"账号 {username} 开始执行消息任务")
-    sent_count = 0
-    for friend_name in scroll_and_select_user(page, username, targets):
-        sent_count += 1
-        if sent_count > len(targets):
-            logger.error(f"账号 {username} 发送次数({sent_count})超过目标数({len(targets)})，强制终止")
+    stats = {"sent": 0, "skipped": 0}
+    for friend_name in scroll_and_select_user(page, username, targets, stats):
+        stats["sent"] += 1
+        if stats["sent"] > len(targets):
+            logger.error(f"账号 {username} 发送次数({stats['sent']})超过目标数({len(targets)})，强制终止")
             _snapshot_on_failure(page, username, "发送次数异常")
             raise RuntimeError(f"账号 {username} 发送次数异常，强制终止")
         logger.debug(f"账号 {username} 已选中好友 {friend_name}，准备输入消息")
@@ -325,7 +343,7 @@ def do_user_task(browser, username, cookies, targets):
         logger.info(f"账号 {username} 已向好友 {friend_name} 发送消息")
 
     context.close()
-    return sent_count
+    return stats
 
 
 def runTasks():
@@ -343,8 +361,13 @@ def runTasks():
             targets = user["targets"]
             username = user.get("username", "未知用户")
             logger.info(f"开始处理账号 {username}")
-            sent = do_user_task(browser, username, cookies, targets)
-            logger.info(f"账号 {username} 任务完成，共发送 {sent} 条消息")
+            stats = do_user_task(browser, username, cookies, targets)
+            sent, skipped = stats["sent"], stats["skipped"]
+            if sent == 0 and skipped == len(targets) and len(targets) > 0:
+                logger.info(f"账号 {username} 今天已全部发送过（跳过 {skipped} 个），无需重复发送")
+                logger.info(f"账号 {username} SKIP_ALL_ALREADY_SENT")
+                continue
+            logger.info(f"账号 {username} 任务完成，共发送 {sent} 条消息，跳过 {skipped} 条")
             # review 自检：配置了目标但一条都没发出去 → 判定失败，避免“静默没发”
             if targets and sent == 0:
                 logger.error(

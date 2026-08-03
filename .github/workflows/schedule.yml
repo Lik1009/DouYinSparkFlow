@@ -2,7 +2,7 @@ name: DouYin Spark Flow Schedule Run
 
 on:
   workflow_dispatch: # 允许手动触发
-  schedule: # 多时段兜底触发，避免单次 cron 被 GitHub 丢弃；当天已发送会自动跳过
+  schedule: # 多时段兜底触发，避免单次 cron 被 GitHub 丢弃；脚本内做当天去重
     - cron: "17 1 * * *" # 北京时间 09:17
     - cron: "17 2 * * *" # 北京时间 10:17
     - cron: "17 3 * * *" # 北京时间 11:17
@@ -37,32 +37,8 @@ jobs:
         VARS_JSON: ${{ toJson(vars) }}
         SECRETS_JSON: ${{ toJson(secrets) }}
       run: python utils/export_github_env.py
-    - name: Skip if already sent today
-      id: skip_check
-      env:
-        LAST_SEND_DATE: ${{ vars.LAST_SEND_DATE }}
-      run: |
-        TODAY=$(TZ=Asia/Shanghai date +%F)
-        echo "今天(北京时间): $TODAY | 上次发送: ${LAST_SEND_DATE:-无}"
-        if [ "$LAST_SEND_DATE" = "$TODAY" ]; then
-          echo "今天已发送过，跳过本次"
-          echo "skipped=true" >> "$GITHUB_OUTPUT"
-          mkdir -p logs
-          echo "SKIP_ALREADY_SENT" > logs/SKIP_ALREADY_SENT
-        else
-          echo "skipped=false" >> "$GITHUB_OUTPUT"
-        fi
     - name: Run DouYin Spark Flow
-      if: steps.skip_check.outputs.skipped != 'true'
       run: python main.py
-    - name: Mark sent date
-      if: success() && steps.skip_check.outputs.skipped != 'true'
-      env:
-        GH_TOKEN: ${{ secrets.SPARKFLOW_PAT }}
-      run: |
-        TODAY=$(TZ=Asia/Shanghai date +%F)
-        gh variable set LAST_SEND_DATE --repo Luolingli/DouYinSparkFlow --body "$TODAY"
-        echo "已记录今天($TODAY)发送完成"
     - uses: actions/upload-artifact@v4
       if: ${{ !cancelled() }}
       with:

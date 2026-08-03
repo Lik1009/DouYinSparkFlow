@@ -32,6 +32,10 @@ def main():
     if app_log.exists():
         text = app_log.read_text(encoding="utf-8", errors="ignore")
 
+    if "SKIP_ALL_ALREADY_SENT" in text:
+        print("[review] 检测到『今天已全部发送过』，review 通过")
+        sys.exit(0)
+
     if args.main_result != "success":
         problems.append(f"发送任务未成功（结果: {args.main_result}）")
 
