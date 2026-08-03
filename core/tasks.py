@@ -170,7 +170,7 @@ def already_sent_today_in_chat(page):
     return False
 
 
-def scroll_and_select_user(page, username, targets, stats):
+def scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup=False):
     """在 www.douyin.com/chat 会话列表中滚动查找目标好友"""
     target_selector = CONVERSATION_ITEM_SELECTOR
     scrollable_friends_selector = CONVERSATION_LIST_SELECTOR
@@ -236,7 +236,7 @@ def scroll_and_select_user(page, username, targets, stats):
                     # 打开会话，检查聊天面板里今天是否已发过火花消息（对方回复后也能识别）
                     element.click()
                     time.sleep(1.5)
-                    if already_sent_today_in_chat(page):
+                    if not bypass_daily_dedup and already_sent_today_in_chat(page):
                         stats["skipped"] += 1
                         logger.info(f"账号 {username} 好友 {targetName} 今天已发送过，跳过")
                         found_targets.add(targetName)
@@ -296,7 +296,7 @@ def scroll_and_select_user(page, username, targets, stats):
                 break
 
 
-def do_user_task(browser, username, cookies, targets):
+def do_user_task(browser, username, cookies, targets, bypass_daily_dedup=False):
     context = browser.new_context()
     context.set_default_navigation_timeout(config["browserTimeout"])
     context.set_default_timeout(config["browserTimeout"])
@@ -335,7 +335,7 @@ def do_user_task(browser, username, cookies, targets):
 
     logger.info(f"账号 {username} 开始执行消息任务")
     stats = {"sent": 0, "skipped": 0}
-    for friend_name in scroll_and_select_user(page, username, targets, stats):
+    for friend_name in scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup):
         stats["sent"] += 1
         if stats["sent"] > len(targets):
             logger.error(f"账号 {username} 发送次数({stats['sent']})超过目标数({len(targets)})，强制终止")
@@ -373,15 +373,30 @@ def runTasks():
         logger.debug("当前配置如下：")
         logger.debug(f"消息模板: {config.get('messageTemplate', '未找到消息模板')}")
         logger.debug(f"一言类型: {config['hitokotoTypes']}")
+
+        # 调试模式：OVERRIDE_TARGETS 覆盖目标（只发给指定好友，默认 zjj 和 Eve）
+        override_targets = None
+        override_raw = os.getenv("OVERRIDE_TARGETS", "").strip()
+        if override_raw:
+            try:
+                override_targets = json.loads(override_raw)
+                logger.info(f"调试模式：仅发送给 {override_targets}")
+            except Exception as e:
+                logger.warning(f"OVERRIDE_TARGETS 解析失败，忽略: {e}")
+
+        bypass_daily_dedup = os.getenv("BYPASS_DAILY_DEDUP", "").strip().lower() in ("1", "true", "yes")
+        if bypass_daily_dedup:
+            logger.info("调试模式：绕过当天去重（可多轮测试）")
+
         for user in userData:
             logger.debug(f"用户: {user.get('username', '未知用户')}, 目标好友: {user['targets']}")
 
         for user in userData:
             cookies = user["cookies"]
-            targets = user["targets"]
+            targets = override_targets if override_targets is not None else user["targets"]
             username = user.get("username", "未知用户")
             logger.info(f"开始处理账号 {username}")
-            stats = do_user_task(browser, username, cookies, targets)
+            stats = do_user_task(browser, username, cookies, targets, bypass_daily_dedup)
             sent, skipped = stats["sent"], stats["skipped"]
             if sent == 0 and skipped == len(targets) and len(targets) > 0:
                 logger.info(f"账号 {username} 今天已全部发送过（跳过 {skipped} 个），无需重复发送")
