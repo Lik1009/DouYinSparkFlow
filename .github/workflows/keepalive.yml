@@ -2,9 +2,14 @@ name: DouYin Cookie Keepalive
 
 on:
   schedule:
-    # 每 12 小时一次（UTC 00:23 / 12:23，即北京时间 08:23 / 20:23）
+    # 每 6 小时一次兜底（UTC 00:23 / 00:53 / 12:23 / 12:53，即北京时间 08:23 / 08:53 / 20:23 / 20:53）
     - cron: "23 */12 * * *"
+    - cron: "53 */12 * * *"
   workflow_dispatch:
+
+concurrency:
+  group: douyin-keepalive
+  cancel-in-progress: false
 
 jobs:
   keepalive:

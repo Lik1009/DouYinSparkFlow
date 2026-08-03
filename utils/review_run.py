@@ -25,6 +25,10 @@ def main():
     problems = []
     text = ""
     app_log = Path(args.logs_dir) / "app.log"
+    skip_marker = Path(args.logs_dir) / "SKIP_ALREADY_SENT"
+    if skip_marker.exists():
+        print("[review] 检测到『今天已发送，跳过』标记，review 通过")
+        sys.exit(0)
     if app_log.exists():
         text = app_log.read_text(encoding="utf-8", errors="ignore")
 
