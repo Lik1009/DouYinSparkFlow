@@ -42,9 +42,12 @@ jobs:
         run: python utils/export_github_env.py
       - name: Run debug send
         env:
-          OVERRIDE_TARGETS: ${{ format('["{0}"]', replace(github.event.inputs.targets, ',', '","')) }}
+          DEBUG_TARGETS_RAW: ${{ github.event.inputs.targets }}
           BYPASS_DAILY_DEDUP: ${{ github.event.inputs.bypass_daily_dedup }}
-        run: python main.py
+        run: |
+          OVERRIDE_TARGETS=$(python3 -c "import json,sys; print(json.dumps([t.strip() for t in sys.argv[1].split(',') if t.strip()]))" "$DEBUG_TARGETS_RAW")
+          echo "调试目标: $OVERRIDE_TARGETS"
+          OVERRIDE_TARGETS="$OVERRIDE_TARGETS" BYPASS_DAILY_DEDUP="$BYPASS_DAILY_DEDUP" python main.py
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
