@@ -30,10 +30,14 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
         run: |
-          # 未实际执行的运行（action_required/cancelled 等）不 review
-          if [ "$MAIN_RESULT" != "success" ] && [ "$MAIN_RESULT" != "failure" ]; then
-            echo "运行未实际执行（$MAIN_RESULT），跳过 review"
+          # action_required = 未实际执行，跳过；其余（失败/超时/取消等）都按失败 review
+          if [ "$MAIN_RESULT" = "action_required" ]; then
+            echo "运行未实际执行（action_required），跳过 review"
             exit 0
+          fi
+          if [ "$MAIN_RESULT" != "success" ]; then
+            echo "运行未成功（$MAIN_RESULT），按失败进行 review"
+            MAIN_RESULT="failure"
           fi
           EXPECTED=$(python3 - <<'PY'
           import json, os

@@ -153,9 +153,22 @@ def scroll_and_select_user(page, username, targets):
         logger.warning(f"账号 {username} 会话列表为空，无可发送对象")
         return
 
-    # 等待会话用户信息接口返回，让标题可被解析（最多约 20 秒）
-    for _ in range(10):
-        if userIDDict:
+    # 等待会话标题从数字 ID 解析为昵称（最多约 60 秒），避免扫描抢跑
+    for _ in range(30):
+        try:
+            visible = page.locator(CONVERSATION_ITEM_SELECTOR).all()[:15]
+            titles = []
+            for el in visible:
+                try:
+                    titles.append(norm(el.locator(CONVERSATION_TITLE_SELECTOR).inner_text()))
+                except Exception:
+                    pass
+            if not titles:
+                break
+            numeric = sum(1 for t in titles if t.isdigit())
+            if numeric == 0 or numeric <= max(1, len(titles) * 0.3):
+                break
+        except Exception:
             break
         time.sleep(2)
 
@@ -165,8 +178,15 @@ def scroll_and_select_user(page, username, targets):
     remaining_targets = set(targets)
     empty_scroll_count = 0
     MAX_EMPTY_SCROLLS = 10
+    scan_deadline = time.monotonic() + 240  # 单账号扫描时间预算：最多 4 分钟
 
     while True:
+        if time.monotonic() > scan_deadline:
+            logger.warning(f"账号 {username} 扫描超过 4 分钟时间预算，停止搜索")
+            if len(remaining_targets) > 0:
+                logger.warning(f"账号 {username} 时间到，仍有以下好友未找到: {remaining_targets}")
+            break
+
         target_elements = page.locator(target_selector).all()
         prev_found_count = len(found_targets)
 
@@ -176,16 +196,6 @@ def scroll_and_select_user(page, username, targets):
                 targetName = span.inner_text()
 
                 targetSymbol = check_target_name(targetName, targets)
-                if not targetSymbol and targetName.isdigit() and targetName not in tried_ids:
-                    # 数字标题：用户信息尚未解析，点击会话触发加载后重试匹配
-                    tried_ids.add(targetName)
-                    element.click()
-                    time.sleep(2.5)
-                    try:
-                        targetName = span.inner_text()
-                    except Exception:
-                        pass
-                    targetSymbol = check_target_name(targetName, targets)
 
                 if targetSymbol:
                     if targetSymbol in sent_targets:
@@ -204,6 +214,9 @@ def scroll_and_select_user(page, username, targets):
                         return
                     found_targets.add(targetName)
                     break
+                if targetName.isdigit():
+                    # 数字标题：用户信息尚未解析，本轮先跳过，等待后续轮次标题更新
+                    continue
                 if targetName in found_targets:
                     continue
                 found_targets.add(targetName)

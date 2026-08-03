@@ -47,6 +47,8 @@ def main():
         problems.append("页面元素多次重试仍失败")
 
     print(f"[review] 主任务结果: {args.main_result}，日志发送数: {sent}/{args.expected}")
+    if args.expected > 0 and 0 < sent < args.expected:
+        print(f"[review] 注意：发送数({sent})少于目标数({args.expected})，可能有部分好友未找到，请查看日志")
     if problems:
         print("[review] 发现问题：")
         for p in problems:
