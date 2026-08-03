@@ -201,7 +201,7 @@ def scroll_and_select_user(page, username, targets):
                     if targetSymbol in sent_targets:
                         # 已发送过，防止重复发送
                         found_targets.add(targetName)
-                        break
+                        continue
                     sent_targets.add(targetSymbol)
                     logger.info(f"账号 {username} 命中目标好友 {targetName}")
                     element.click()
