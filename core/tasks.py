@@ -21,8 +21,10 @@ CONVERSATION_ITEM_SELECTOR = ".conversationConversationItemwrapper"
 CONVERSATION_TITLE_SELECTOR = ".conversationConversationItemtitle"
 CONVERSATION_LIST_SELECTOR = ".conversationConversationListwrapper"
 CHAT_EDITOR_SELECTOR = ".messageEditorimChatEditorContainer"
-CONVERSATION_TIME_SELECTOR = ".ConversationItemTagNextToTitletimeStr"
-CONVERSATION_SNIPPET_SELECTOR = ".ConversationItemDeschintWrapper"
+CHAT_MESSAGE_BOX_SELECTOR = ".messageMessageBoxmessageBox"
+CHAT_FROM_ME_SELECTOR = ".MessageItemTextisFromMe"
+CHAT_BUBBLE_TEXT_SELECTOR = ".MessageItemTextbubbleTextContent"
+CHAT_MESSAGE_TIME_SELECTOR = ".MessageBoxTimetimeLayout"
 
 # 未登录时页面会出现的关键字
 LOGIN_MARKERS = ["扫码登录", "验证码登录", "密码登录"]
@@ -141,6 +143,33 @@ def check_target_name(targetName, targets):
     return None
 
 
+def already_sent_today_in_chat(page):
+    """打开会话后检查聊天面板：是否存在今天发送的火花消息（我发的 + 今日火花 + 时间非昨天/前天）"""
+    try:
+        boxes = page.locator(CHAT_MESSAGE_BOX_SELECTOR)
+        n = boxes.count()
+        for i in range(min(n, 30)):
+            box = boxes.nth(i)
+            if box.locator(CHAT_FROM_ME_SELECTOR).count() == 0:
+                continue
+            try:
+                txt = box.locator(CHAT_BUBBLE_TEXT_SELECTOR).inner_text(timeout=1500)
+            except Exception:
+                continue
+            if "今日火花" not in txt:
+                continue
+            t = ""
+            try:
+                t = box.locator(CHAT_MESSAGE_TIME_SELECTOR).inner_text(timeout=1500)
+            except Exception:
+                pass
+            if "昨天" not in t and "前天" not in t and "/" not in t:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def scroll_and_select_user(page, username, targets, stats):
     """在 www.douyin.com/chat 会话列表中滚动查找目标好友"""
     target_selector = CONVERSATION_ITEM_SELECTOR
@@ -204,25 +233,16 @@ def scroll_and_select_user(page, username, targets, stats):
                         # 已发送过，防止重复发送
                         found_targets.add(targetName)
                         continue
-                    # 当天幂等：会话最后一条消息已是今天发送的火花消息则跳过
-                    try:
-                        time_str = element.locator(CONVERSATION_TIME_SELECTOR).inner_text(timeout=2000)
-                        snippet = element.locator(CONVERSATION_SNIPPET_SELECTOR).inner_text(timeout=2000)
-                    except Exception:
-                        time_str, snippet = "", ""
-                    already_today = (
-                        "今日火花" in snippet
-                        and "昨天" not in time_str
-                        and "前天" not in time_str
-                    )
-                    if already_today:
+                    # 打开会话，检查聊天面板里今天是否已发过火花消息（对方回复后也能识别）
+                    element.click()
+                    time.sleep(1.5)
+                    if already_sent_today_in_chat(page):
                         stats["skipped"] += 1
                         logger.info(f"账号 {username} 好友 {targetName} 今天已发送过，跳过")
                         found_targets.add(targetName)
                         continue
                     sent_targets.add(targetSymbol)
                     logger.info(f"账号 {username} 命中目标好友 {targetName}")
-                    element.click()
                     yield targetSymbol
 
                     if targetSymbol in remaining_targets:
