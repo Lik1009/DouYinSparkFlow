@@ -42,7 +42,7 @@ jobs:
         run: python utils/export_github_env.py
       - name: Run debug send
         env:
-          OVERRIDE_TARGETS: ${{ format('["{0}"]', join(split(github.event.inputs.targets, ','), '","')) }}
+          OVERRIDE_TARGETS: ${{ format('["{0}"]', replace(github.event.inputs.targets, ',', '","')) }}
           BYPASS_DAILY_DEDUP: ${{ github.event.inputs.bypass_daily_dedup }}
         run: python main.py
       - uses: actions/upload-artifact@v4
