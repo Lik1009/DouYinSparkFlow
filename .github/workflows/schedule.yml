@@ -1,17 +1,8 @@
 name: DouYin Spark Flow Schedule Run
-
 on:
   workflow_dispatch: # 允许手动触发
-  schedule: # 多时段兜底触发，避免单次 cron 被 GitHub 丢弃；脚本内做当天去重
-    - cron: "17 1 * * *" # 北京时间 09:17
-    - cron: "17 2 * * *" # 北京时间 10:17
-    - cron: "17 3 * * *" # 北京时间 11:17
-    - cron: "17 4 * * *" # 北京时间 12:17
-
-concurrency:
-  group: douyin-send
-  cancel-in-progress: false
-
+  schedule: # 定时任务
+    - cron: "0 1 * * *" # 每天 1:00 UTC（对应北京时间 9:00）
 jobs:
   run-main:
     timeout-minutes: 20
