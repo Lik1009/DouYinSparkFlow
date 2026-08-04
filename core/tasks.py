@@ -8,6 +8,7 @@ from playwright.sync_api import Response
 import time
 import json
 import os
+import re
 
 
 config = get_config()
@@ -163,7 +164,12 @@ def already_sent_today_in_chat(page):
                 t = box.locator(CHAT_MESSAGE_TIME_SELECTOR).inner_text(timeout=1500)
             except Exception:
                 pass
-            if "昨天" not in t and "前天" not in t and "/" not in t:
+            t = t.strip()
+            if not t:
+                continue
+            if "昨天" in t or "前天" in t or "/" in t:
+                continue
+            if re.match(r"^(刚刚|\d+\s*分钟前|\d+\s*小时前|\d{1,2}:\d{2})$", t):
                 return True
     except Exception:
         pass
@@ -207,93 +213,106 @@ def scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup=Fa
     tried_ids = set()
     sent_targets = set()
     remaining_targets = set(targets)
-    empty_scroll_count = 0
     MAX_EMPTY_SCROLLS = 10
-    scan_deadline = time.monotonic() + 240  # 单账号扫描时间预算：最多 4 分钟
 
-    while True:
-        if time.monotonic() > scan_deadline:
-            logger.warning(f"账号 {username} 扫描超过 4 分钟时间预算，停止搜索")
-            if len(remaining_targets) > 0:
-                logger.warning(f"账号 {username} 时间到，仍有以下好友未找到: {remaining_targets}")
+    # 最多扫两轮：发送后列表会重排，第二轮回到顶部再扫一遍，避免漏掉目标
+    for scan_pass in range(2):
+        if not remaining_targets:
             break
-
-        target_elements = page.locator(target_selector).all()
-        prev_found_count = len(found_targets)
-
-        for element in target_elements:
+        if scan_pass > 0:
+            logger.info(f"账号 {username} 开始第二轮扫描（回到列表顶部）")
             try:
-                span = element.locator(CONVERSATION_TITLE_SELECTOR)
-                targetName = span.inner_text()
+                scrollable = page.locator(scrollable_friends_selector).element_handle()
+                page.evaluate("(element) => element.scrollTop = 0", scrollable)
+            except Exception:
+                pass
+            time.sleep(1.5)
 
-                targetSymbol = check_target_name(targetName, targets)
+        empty_scroll_count = 0
+        scan_deadline = time.monotonic() + 150  # 每轮扫描时间预算：最多 2.5 分钟
 
-                if targetSymbol:
-                    if targetSymbol in sent_targets:
-                        # 已发送过，防止重复发送
+        while True:
+            if time.monotonic() > scan_deadline:
+                logger.warning(f"账号 {username} 第 {scan_pass + 1} 轮扫描超过时间预算，停止")
+                break
+
+            target_elements = page.locator(target_selector).all()
+            prev_found_count = len(found_targets)
+
+            for element in target_elements:
+                try:
+                    span = element.locator(CONVERSATION_TITLE_SELECTOR)
+                    targetName = span.inner_text()
+
+                    targetSymbol = check_target_name(targetName, targets)
+
+                    if targetSymbol:
+                        if targetSymbol in sent_targets:
+                            # 已发送过，防止重复发送
+                            found_targets.add(targetName)
+                            continue
+                        # 打开会话，检查聊天面板里今天是否已发过火花消息（对方回复后也能识别）
+                        element.click()
+                        time.sleep(2.5)
+                        if not bypass_daily_dedup and already_sent_today_in_chat(page):
+                            stats["skipped"] += 1
+                            logger.info(f"账号 {username} 好友 {targetName} 今天已发送过，跳过")
+                            found_targets.add(targetName)
+                            continue
+                        sent_targets.add(targetSymbol)
+                        logger.info(f"账号 {username} 命中目标好友 {targetName}")
+                        yield targetSymbol
+
+                        if targetSymbol in remaining_targets:
+                            remaining_targets.remove(targetSymbol)
+                        if len(remaining_targets) == 0:
+                            logger.debug(f"账号 {username} 所有目标好友均已找到，停止搜索")
+                            return
                         found_targets.add(targetName)
+                        break
+                    if targetName.isdigit():
+                        # 数字标题：用户信息尚未解析，本轮先跳过，等待后续轮次标题更新
                         continue
-                    # 打开会话，检查聊天面板里今天是否已发过火花消息（对方回复后也能识别）
-                    element.click()
-                    time.sleep(1.5)
-                    if not bypass_daily_dedup and already_sent_today_in_chat(page):
-                        stats["skipped"] += 1
-                        logger.info(f"账号 {username} 好友 {targetName} 今天已发送过，跳过")
-                        found_targets.add(targetName)
+                    if targetName in found_targets:
                         continue
-                    sent_targets.add(targetSymbol)
-                    logger.info(f"账号 {username} 命中目标好友 {targetName}")
-                    yield targetSymbol
-
-                    if targetSymbol in remaining_targets:
-                        remaining_targets.remove(targetSymbol)
-                    if len(remaining_targets) == 0:
-                        logger.debug(f"账号 {username} 所有目标好友均已找到，停止搜索")
-                        return
                     found_targets.add(targetName)
-                    break
-                if targetName.isdigit():
-                    # 数字标题：用户信息尚未解析，本轮先跳过，等待后续轮次标题更新
-                    continue
-                if targetName in found_targets:
-                    continue
-                found_targets.add(targetName)
-                logger.debug(f"账号 {username} 找到会话 {targetName}")
-            except Exception as e:
-                traceback.print_exc()
-        else:
-            new_found = len(found_targets) > prev_found_count
-            if new_found:
-                empty_scroll_count = 0
+                    logger.debug(f"账号 {username} 找到会话 {targetName}")
+                except Exception as e:
+                    traceback.print_exc()
             else:
-                empty_scroll_count += 1
-
-            if empty_scroll_count >= MAX_EMPTY_SCROLLS:
-                logger.warning(f"账号 {username} 连续 {MAX_EMPTY_SCROLLS} 次滚动未发现新会话，判定已到达底部")
-                if len(remaining_targets) > 0:
-                    logger.warning(f"账号 {username} 搜索结束，仍有以下好友未找到: {remaining_targets}")
-                break
-
-            scrollable_element = page.locator(scrollable_friends_selector).element_handle()
-            if scrollable_element:
-                scroll_top_before = page.evaluate("(element) => element.scrollTop", scrollable_element)
-                page.evaluate("(element) => element.scrollTop += 800", scrollable_element)
-                time.sleep(0.3)
-                scroll_top_after = page.evaluate("(element) => element.scrollTop", scrollable_element)
-
-                if scroll_top_before == scroll_top_after:
-                    empty_scroll_count += 2
-                    logger.debug(
-                        f"账号 {username} scrollTop 未变化 ({scroll_top_before})，可能已到底 (空滚动计数: {empty_scroll_count}/{MAX_EMPTY_SCROLLS})"
-                    )
+                new_found = len(found_targets) > prev_found_count
+                if new_found:
+                    empty_scroll_count = 0
                 else:
-                    logger.debug(
-                        f"账号 {username} 滚动会话列表加载更多 (scrollTop: {scroll_top_before} -> {scroll_top_after})"
-                    )
-                time.sleep(1.5)
-            else:
-                logger.error(f"账号 {username} 未找到滚动容器，退出")
-                break
+                    empty_scroll_count += 1
+
+                if empty_scroll_count >= MAX_EMPTY_SCROLLS:
+                    logger.debug(f"账号 {username} 第 {scan_pass + 1} 轮已到达列表底部")
+                    break
+
+                scrollable_element = page.locator(scrollable_friends_selector).element_handle()
+                if scrollable_element:
+                    scroll_top_before = page.evaluate("(element) => element.scrollTop", scrollable_element)
+                    page.evaluate("(element) => element.scrollTop += 800", scrollable_element)
+                    time.sleep(0.3)
+                    scroll_top_after = page.evaluate("(element) => element.scrollTop", scrollable_element)
+
+                    if scroll_top_before == scroll_top_after:
+                        empty_scroll_count += 2
+                        logger.debug(
+                            f"账号 {username} scrollTop 未变化 ({scroll_top_before})，可能已到底 (空滚动计数: {empty_scroll_count}/{MAX_EMPTY_SCROLLS})"
+                        )
+                    else:
+                        logger.debug(
+                            f"账号 {username} 滚动会话列表加载更多 (scrollTop: {scroll_top_before} -> {scroll_top_after})"
+                        )
+                    time.sleep(1.5)
+                else:
+                    logger.error(f"账号 {username} 未找到滚动容器，退出")
+                    break
+
+    if len(remaining_targets) > 0:
+        logger.warning(f"账号 {username} 搜索结束，仍有以下好友未找到: {remaining_targets}")
 
 
 def do_user_task(browser, username, cookies, targets, bypass_daily_dedup=False):
