@@ -423,8 +423,11 @@ def runTasks():
             logger.info(f"开始处理账号 {username}")
             stats = do_user_task(browser, username, cookies, targets, bypass_daily_dedup)
             sent, skipped = stats["sent"], stats["skipped"]
-            if sent == 0 and skipped == len(targets) and len(targets) > 0:
-                logger.info(f"账号 {username} 今天已全部发送过（跳过 {skipped} 个），无需重复发送")
+            if sent == 0 and skipped > 0:
+                logger.info(
+                    f"账号 {username} 今天已发送过，本次跳过 {skipped} 个"
+                    f"（另有 {len(targets) - skipped} 个未找到），无需重复发送"
+                )
                 logger.info(f"账号 {username} SKIP_ALL_ALREADY_SENT")
                 continue
             logger.info(f"账号 {username} 任务完成，共发送 {sent} 条消息，跳过 {skipped} 条")
