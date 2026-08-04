@@ -258,6 +258,8 @@ def scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup=Fa
                             stats["skipped"] += 1
                             logger.info(f"账号 {username} 好友 {targetName} 今天已发送过，跳过")
                             found_targets.add(targetName)
+                            if targetSymbol in remaining_targets:
+                                remaining_targets.remove(targetSymbol)
                             continue
                         sent_targets.add(targetSymbol)
                         logger.info(f"账号 {username} 命中目标好友 {targetName}")
