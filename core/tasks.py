@@ -10,6 +10,10 @@ import json
 import os
 import re
 from datetime import datetime, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 
 
 config = get_config()
@@ -177,7 +181,7 @@ def already_sent_today_in_chat(page):
 
 def _time_is_today(t, now=None):
     """把抖音聊天面板的时间字符串解析为真实时间，判断是否今天"""
-    now = now or datetime.now()
+    now = now or _beijing_now()
     t = t.strip().replace("今天 ", "")
     if not t:
         return False
@@ -196,6 +200,16 @@ def _time_is_today(t, now=None):
         # 纯时钟时间：不晚于当前时刻视为今天
         return (int(m.group(1)), int(m.group(2))) <= (now.hour, now.minute)
     return False
+
+
+def _beijing_now():
+    """抖音显示的是北京时间；runner 系统时钟是 UTC，必须显式用北京时区"""
+    try:
+        if ZoneInfo is not None:
+            return datetime.now(ZoneInfo("Asia/Shanghai"))
+    except Exception:
+        pass
+    return datetime.utcnow() + timedelta(hours=8)
 
 
 def scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup=False):
