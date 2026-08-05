@@ -406,7 +406,9 @@ def scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup=Fa
 
 
 def do_user_task(browser, username, cookies, targets, bypass_daily_dedup=False):
-    context = browser.new_context()
+    # 关键：强制浏览器使用北京时区，否则 runner(UTC) 下抖音消息时间显示为 UTC，
+    # 导致“今天/昨天”判断错乱（昨天 10:38 会显示成 02:38 被误判为今天）
+    context = browser.new_context(timezone_id="Asia/Shanghai")
     context.set_default_navigation_timeout(config["browserTimeout"])
     context.set_default_timeout(config["browserTimeout"])
 
