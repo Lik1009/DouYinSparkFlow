@@ -9,6 +9,7 @@ import time
 import json
 import os
 import re
+from datetime import datetime, timedelta
 
 
 config = get_config()
@@ -167,12 +168,33 @@ def already_sent_today_in_chat(page):
             t = t.strip()
             if not t:
                 continue
-            if "昨天" in t or "前天" in t or "/" in t:
-                continue
-            if re.match(r"^(刚刚|\d+\s*分钟前|\d+\s*小时前|\d{1,2}:\d{2})$", t):
+            if _time_is_today(t):
                 return True
     except Exception:
         pass
+    return False
+
+
+def _time_is_today(t, now=None):
+    """把抖音聊天面板的时间字符串解析为真实时间，判断是否今天"""
+    now = now or datetime.now()
+    t = t.strip().replace("今天 ", "")
+    if not t:
+        return False
+    if "昨天" in t or "前天" in t or "/" in t:
+        return False
+    if t == "刚刚":
+        return True
+    m = re.match(r"^(\d+)\s*分钟前$", t)
+    if m:
+        return (now - timedelta(minutes=int(m.group(1)))).date() == now.date()
+    m = re.match(r"^(\d+)\s*小时前$", t)
+    if m:
+        return (now - timedelta(hours=int(m.group(1)))).date() == now.date()
+    m = re.match(r"^(\d{1,2}):(\d{2})$", t)
+    if m:
+        # 纯时钟时间：不晚于当前时刻视为今天
+        return (int(m.group(1)), int(m.group(2))) <= (now.hour, now.minute)
     return False
 
 
@@ -215,8 +237,8 @@ def scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup=Fa
     remaining_targets = set(targets)
     MAX_EMPTY_SCROLLS = 10
 
-    # 最多扫两轮：发送后列表会重排，第二轮回到顶部再扫一遍，避免漏掉目标
-    for scan_pass in range(2):
+    # 最多扫三轮：发送后列表会重排，回到顶部补扫，避免漏掉目标
+    for scan_pass in range(3):
         if not remaining_targets:
             break
         if scan_pass > 0:
