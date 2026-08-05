@@ -31,6 +31,10 @@ CHAT_MESSAGE_BOX_SELECTOR = ".messageMessageBoxmessageBox"
 CHAT_FROM_ME_SELECTOR = ".MessageItemTextisFromMe"
 CHAT_BUBBLE_TEXT_SELECTOR = ".MessageItemTextbubbleTextContent"
 CHAT_MESSAGE_TIME_SELECTOR = ".MessageBoxTimetimeLayout"
+SEARCH_INPUT_SELECTOR = 'input[placeholder="搜索"]'
+SEARCH_PANEL_ITEM_SELECTOR = ".SearchPanelitembox"
+SEARCH_PANEL_TITLE_SELECTOR = ".SearchPanelitemtitle"
+SEARCH_PANEL_CHAT_BTN_SELECTOR = ".SearchPanelitemchat_btn"
 
 # 未登录时页面会出现的关键字
 LOGIN_MARKERS = ["扫码登录", "验证码登录", "密码登录"]
@@ -173,10 +177,58 @@ def already_sent_today_in_chat(page):
             if not t:
                 continue
             if _time_is_today(t):
+                logger.debug(f"聊天面板发现今日火花消息，时间={t}，判定今天已发送")
                 return True
     except Exception:
         pass
     return False
+
+
+def resolve_nickname(target):
+    """从 userIDDict 中查找目标标识（short_id/unique_id/sec_uid/uid）对应的昵称/备注"""
+    for info in userIDDict.values():
+        if target in (info[0], info[1], info[2], info[5]):
+            return info[4] or info[3]
+    return None
+
+
+def clear_search(page):
+    try:
+        page.locator(SEARCH_INPUT_SELECTOR).fill("")
+        time.sleep(0.8)
+    except Exception:
+        pass
+
+
+def search_and_open_chat(page, username, nickname):
+    """在搜索框输入昵称，点击『发消息』打开对应会话；成功返回 True"""
+    try:
+        search_input = page.locator(SEARCH_INPUT_SELECTOR)
+        search_input.fill(nickname)
+        time.sleep(2.5)
+        items = page.locator(SEARCH_PANEL_ITEM_SELECTOR)
+        n = items.count()
+        if n == 0:
+            logger.warning(f"账号 {username} 搜索「{nickname}」无结果")
+            clear_search(page)
+            return False
+        for i in range(min(n, 10)):
+            try:
+                title = norm(items.nth(i).locator(SEARCH_PANEL_TITLE_SELECTOR).inner_text(timeout=1500))
+            except Exception:
+                continue
+            if title == norm(nickname):
+                items.nth(i).locator(SEARCH_PANEL_CHAT_BTN_SELECTOR).click()
+                time.sleep(2.0)
+                logger.debug(f"账号 {username} 已通过搜索打开会话「{nickname}」")
+                return True
+        logger.warning(f"账号 {username} 搜索「{nickname}」无精确匹配（{n} 个结果），跳过")
+        clear_search(page)
+        return False
+    except Exception as e:
+        logger.warning(f"账号 {username} 搜索「{nickname}」出错: {e}")
+        clear_search(page)
+        return False
 
 
 def _time_is_today(t, now=None):
@@ -392,32 +444,61 @@ def do_user_task(browser, username, cookies, targets, bypass_daily_dedup=False):
 
     logger.info(f"账号 {username} 开始执行消息任务")
     stats = {"sent": 0, "skipped": 0}
-    for friend_name in scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup):
+
+    def send_in_open_chat(friend_name):
+        """向已打开的会话发送消息（含发送次数硬上限保护）"""
         stats["sent"] += 1
         if stats["sent"] > len(targets):
             logger.error(f"账号 {username} 发送次数({stats['sent']})超过目标数({len(targets)})，强制终止")
             _snapshot_on_failure(page, username, "发送次数异常")
             raise RuntimeError(f"账号 {username} 发送次数异常，强制终止")
         logger.debug(f"账号 {username} 已选中好友 {friend_name}，准备输入消息")
-        chat_input_selector = CHAT_EDITOR_SELECTOR
         try:
-            page.wait_for_selector(chat_input_selector, timeout=config["browserTimeout"])
+            page.wait_for_selector(CHAT_EDITOR_SELECTOR, timeout=config["browserTimeout"])
         except Exception:
             _snapshot_on_failure(page, username, f"聊天输入框-{friend_name}")
             raise
-        chat_input = page.locator(chat_input_selector)
-
+        chat_input = page.locator(CHAT_EDITOR_SELECTOR)
         message = build_message()
         for line in message.split("\\n"):
             chat_input.type(line)
             if line != message.split("\\n")[-1]:
                 chat_input.press("Shift+Enter")
-
         logger.info(f"账号 {username} 向好友 {friend_name} 输入消息: {message}")
         chat_input.press("Enter")
         time.sleep(2)
         _snapshot_on_failure(page, username, f"发送后-{friend_name}")
         logger.info(f"账号 {username} 已向好友 {friend_name} 发送消息")
+
+    # 第一优先：按昵称搜索直达会话（稳定，不依赖列表滚动/排序）
+    remaining_targets = list(targets)
+    for target in remaining_targets[:]:
+        nickname = resolve_nickname(target)
+        if not nickname:
+            logger.debug(f"账号 {username} 目标 {target} 暂无昵称映射，走滚动兜底")
+            continue
+        try:
+            if not search_and_open_chat(page, username, nickname):
+                continue
+            time.sleep(1.0)
+            if not bypass_daily_dedup and already_sent_today_in_chat(page):
+                stats["skipped"] += 1
+                logger.info(f"账号 {username} 好友 {nickname}({target}) 今天已发送过，跳过")
+                clear_search(page)
+                remaining_targets.remove(target)
+                continue
+            send_in_open_chat(nickname)
+            clear_search(page)
+            remaining_targets.remove(target)
+        except Exception as e:
+            logger.warning(f"账号 {username} 搜索发送 {target} 失败: {e}")
+            clear_search(page)
+
+    # 第二优先：滚动扫描兜底（处理搜索失败/无昵称映射的剩余目标）
+    if remaining_targets:
+        logger.info(f"账号 {username} 剩余 {len(remaining_targets)} 个目标走滚动扫描: {remaining_targets}")
+        for friend_name in scroll_and_select_user(page, username, remaining_targets, stats, bypass_daily_dedup):
+            send_in_open_chat(friend_name)
 
     context.close()
     return stats
