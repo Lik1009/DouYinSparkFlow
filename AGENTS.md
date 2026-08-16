@@ -1,7 +1,7 @@
 # DouYinSparkFlow 项目交接文档
 
 > 本文件供任何接手此项目的 agent/开发者完整理解项目。请先通读，再动手。
-> 最后更新时间：2026-08-14（main 分支，最新提交 `698d653`）
+> 最后更新时间：2026-08-16（main 分支）
 
 ## 1. 项目是什么
 
@@ -24,7 +24,7 @@
 | 文件 | 作用 | cron（UTC） | 备注 |
 |---|---|---|---|
 | `schedule.yml` | **主发送** | `0 19 * * *` | ⚠️ **修改此文件会触发 GitHub“恶意工作流”审批门禁**，需要仓库所有者手动 Approve；非必要不要改 |
-| `catchup.yml` | 兜底触发 | `17 2 / 17 4 / 17 7 * * *` | 查当天是否已有成功发送（`gh api runs?status=success`），没有才 dispatch 主发送；新文件可安全修改 |
+| `catchup.yml` | 兜底触发 | `17 2 / 17 4 / 17 7 * * *` | 查当天是否已有成功发送（用**专用端点** `/actions/workflows/schedule.yml/runs`，created_at 换算北京日期比较；通用端点 `workflow_id` 过滤失效，见 §6.10），没有才 dispatch 主发送；新文件可安全修改 |
 | `keepalive.yml` | cookies 续期 | `23 */12` + `53 */12` | 用现有 cookies 打开 chat 页触发心跳，抓取最新 cookies，用 `SPARKFLOW_PAT` 回写 `COOKIES_SAKURO_MAI` |
 | `review.yml` | 发送后核对 | workflow_run 触发 | 下载 run-logs 工件解析 app.log；cookies 过期发专属邮件（SMTP 未配置则跳过）；识别跳过标记 |
 | `schedule_dev.yml` / `schedule_api.yml` | 上游 fork 测试用 | - | 在本仓库为 disabled_fork，忽略 |
@@ -55,9 +55,9 @@
 
 - `TASKS`（当前值）：
   ```json
-  [{"username":"Sakuro.","unique_id":"Sakuro_Mai","targets":["84611333990","57569913835","HOLLOW_LOVE","zjj00000010","25191158994","xiaolangaini","1191371127","heihahou7316","98241180006"]},{"username":"","unique_id":"","targets":[]}]
+  [{"username":"Sakuro.","unique_id":"Sakuro_Mai","targets":["84611333990","57569913835","HOLLOW_LOVE","zjj00000010","25191158994","xiaolangaini","1191371127","heihahou7316","98241180006"]}]
   ```
-  注意：第二个空任务（无 unique_id）会被跳过并打一条 WARNING，可清理但无害。
+  （2026-08-16 已清理原第二个空任务，不再打 WARNING。）
 - `MATCH_MODE=short_id`：匹配用抖音号/short_id（脚本实际同时支持多种标识符，见 §5）
 - `MESSAGE_TEMPLATE`：`[盖瑞]今日火花[加一]\n—— [右边] 每日一言 [左边] ——\n[API]`
 - `HITOKOTO_TYPES=["文学","诗词","哲学"]`，`LOG_LEVEL=Debug`
@@ -68,7 +68,7 @@
 - `DEBUG_TARGETS`：JSON 数组，如 `["zjj00000010","84611333990"]`；设置后只发给这些目标。
 - `DEBUG_BYPASS_DEDUP=1`：调试时绕过当天去重，允许多轮测试。
 - **用完必须清空**（`gh variable delete`），否则生产运行也会被限制。
-- `LAST_SEND_DATE`：历史遗留变量（旧去重方案），当前代码不使用，可删除。
+- `LAST_SEND_DATE`：历史遗留变量（旧去重方案），当前代码不使用；**已于 2026-08-16 删除**。
 
 ## 5. 核心逻辑（core/tasks.py）
 
@@ -102,6 +102,7 @@
 7. **GitHub cron 延迟/丢失**：cron 可能延迟 3-5 小时甚至跳过（官方特性）。对策：主 cron 提前（北京 03:00）+ catchup 多时段兜底 + 应用层幂等。**不要承诺“准时 9 点”**。
 8. **工作流审批门禁**：改 `schedule.yml` 会触发 GitHub“potentially malicious workflow”审批；`gh run rerun`、`gh variable set` 等自管理步骤同样触发。**新工作流文件（catchup/review/keepalive）不受影响，可安全修改。**
 9. **review 误报**：0 发送但已有跳过（当天已发）曾误判失败 → 已改为“跳过>0 不算失败”。
+10. **catchup 兜底曾完全失效（2026-08-16 修复）**：原实现用通用端点 `/actions/runs?workflow_id=...` 查询主发送，但实测该端点的 `workflow_id` 过滤参数**完全失效**（不同 workflow_id 返回同样的全量 run），catchup 每次都把 keepalive/catchup 自身的成功运行误当成"主发送已成功"，导致**永远跳过、从不兜底**。修复：改用专用端点 `/actions/workflows/schedule.yml/runs`，并把 created_at（UTC）换算成北京日期再与当天比较（主发送在北京凌晨 = UTC 前一天，字符串前缀比较会跨天误判）。
 
 ## 7. 关键选择器（抖音改版时首要检查点）
 

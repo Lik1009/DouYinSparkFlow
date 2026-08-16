@@ -45,6 +45,8 @@ def main():
             problems.append("未检测到『任务完成』标记")
         if sent == 0:
             problems.append("实际发送数为 0，疑似异常")
+        elif sent > args.expected:
+            problems.append(f"实际发送数({sent})超过目标数({args.expected})，疑似重复发送")
     if "未登录" in text:
         problems.append("检测到未登录（cookies 已过期或无效）")
     if "Traceback" in text:

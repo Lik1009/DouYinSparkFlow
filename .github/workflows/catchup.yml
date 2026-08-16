@@ -1,7 +1,7 @@
 name: DouYin Send Catchup
 
-# 兜底触发：主发送工作流每天 09:00 定时跑，这里再安排几个补充时段，
-# 如果当天还没有成功发送就自动触发一次（发送脚本内部有当天幂等，不会重复发）。
+# 兜底触发：主发送工作流每天 19:00 UTC（北京时间次日 03:00）定时跑，
+# 这里再安排几个补充时段，如果当天还没有成功发送就自动触发一次（发送脚本内部有当天幂等，不会重复发）。
 on:
   schedule:
     - cron: "17 2 * * *" # 北京时间 10:17
@@ -22,11 +22,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.SPARKFLOW_PAT }}
         run: |
-          LAST=$(gh api "repos/Luolingli/DouYinSparkFlow/actions/runs?workflow_id=319507627&status=success&per_page=1" \
+          # 注意：必须用专用端点 /actions/workflows/{id}/runs 查询主发送工作流。
+          # 通用端点 /actions/runs?workflow_id=... 的 workflow_id 过滤参数实测完全失效
+          # （会返回所有工作流的最近成功 run，导致永远误判"今天已发送过"而从不兜底）。
+          LAST=$(gh api "repos/Luolingli/DouYinSparkFlow/actions/workflows/schedule.yml/runs?status=success&per_page=1" \
             --jq '.workflow_runs[0].created_at // ""' 2>/dev/null || echo "")
+          # created_at 是 UTC；主发送在北京凌晨 03:00 左右（UTC 前一天晚上），
+          # 必须换算成北京日期再与"今天"比较，否则跨天误判导致每天多余触发。
+          LAST_BJ=""
+          if [ -n "$LAST" ]; then
+            LAST_BJ=$(TZ=Asia/Shanghai date -d "$LAST" +%F 2>/dev/null || echo "")
+          fi
           TODAY=$(TZ=Asia/Shanghai date +%F)
-          echo "今天(北京时间): $TODAY | 最近成功发送: ${LAST:-无}"
-          if [[ "$LAST" == "$TODAY"* ]]; then
+          echo "今天(北京时间): $TODAY | 最近成功发送(北京日期): ${LAST_BJ:-无}"
+          if [ -n "$LAST_BJ" ] && [ "$LAST_BJ" = "$TODAY" ]; then
             echo "今天已成功发送过，跳过"
           else
             echo "今天尚未成功发送，触发发送工作流"
