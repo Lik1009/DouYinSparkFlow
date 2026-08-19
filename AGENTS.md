@@ -8,7 +8,7 @@
 **抖音火花自动续火脚本**：每天自动通过抖音网页版聊天页（`https://www.douyin.com/chat`）给指定好友各发送一条“今日火花”消息，维持好友火花。由 GitHub Actions 定时运行，无人值守。
 
 - 账号：`Sakuro_Mai`（抖音昵称 Sakuro.）
-- 目标好友：9 人（见 §4 TASKS）
+- 目标好友：10 人（见 §4 TASKS）
 - 运行环境：GitHub Actions（ubuntu-latest），云端无头 Chromium
 
 ## 2. 当前状态（截至 2026-08-14）
@@ -55,9 +55,9 @@
 
 - `TASKS`（当前值）：
   ```json
-  [{"username":"Sakuro.","unique_id":"Sakuro_Mai","targets":["84611333990","57569913835","HOLLOW_LOVE","zjj00000010","25191158994","xiaolangaini","1191371127","heihahou7316","98241180006"]}]
+  [{"username":"Sakuro.","unique_id":"Sakuro_Mai","targets":["84611333990","57569913835","HOLLOW_LOVE","zjj00000010","25191158994","xiaolangaini","1191371127","heihahou7316","98241180006","72534209781"]}]
   ```
-  （2026-08-16 已清理原第二个空任务，不再打 WARNING。）
+  （2026-08-16 已清理原第二个空任务，不再打 WARNING；2026-08-19 新增好友 `72534209781`，目标 9 → 10 人。）
 - `MATCH_MODE=short_id`：匹配用抖音号/short_id（脚本实际同时支持多种标识符，见 §5）
 - `MESSAGE_TEMPLATE`：`[盖瑞]今日火花[加一]\n—— [右边] 每日一言 [左边] ——\n[API]`
 - `HITOKOTO_TYPES=["文学","诗词","哲学"]`，`LOG_LEVEL=Debug`
@@ -123,8 +123,8 @@
 
 ## 8. 验证方式
 
-- 运行日志关键行：`任务完成，共发送 9 条消息，跳过 0 条`（每天应如此）。
-- Review 输出：`[review] 主任务结果: success，日志发送数: 9/9` / `检查通过`。
+- 运行日志关键行：`任务完成，共发送 10 条消息，跳过 0 条`（每天应如此；N = TASKS 里 targets 总数）。
+- Review 输出：`[review] 主任务结果: success，日志发送数: 10/10` / `检查通过`。
 - 工件 `run-logs`：`logs/app.log` + `logs/screenshots/发送后-*.png`（每发一人一张）。
 - 当天重复触发应全跳过（日志出现 `SKIP_ALL_ALREADY_SENT`），review 判通过。
 - 常用命令：
@@ -178,3 +178,11 @@
 ---
 
 *文档维护：任何改变行为的重要改动，请同步更新本文件。*
+
+## 12. 抖音单会话规则（2026-08-17 实测确认，务必遵守）
+
+- **一个抖音账号同一时间只有一个有效网页会话**：任何一次扫码登录都会签发新 sessionid，旧会话立即失效。
+- 实测案例：ai-news-douyin 项目的 douyin web login 扫码后，本项目的聊天会话 cookies 全部失效（keepalive 也救不回来）。
+- 本项目与 ai-news-douyin **共享同一份会话 cookies**：COOKIES_SAKURO_MAI（secret） ↔ ~/.config/douyin_keepalive/cookies.json ↔ ai-news-douyin 的 data/web_cookies.json。
+- **任何一方重新扫码后，必须把新 cookies 同步到另外两处**（gh secret set COOKIES_SAKURO_MAI --env user-data --repo Luolingli/DouYinSparkFlow + 复制本地文件），否则另一方必挂。
+- 日常运行（keepalive 心跳、发布后回写）不会创建新会话，可放心共存；**不要**为了"保险"而主动重新扫码。
