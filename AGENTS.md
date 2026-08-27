@@ -1,7 +1,7 @@
 # DouYinSparkFlow 项目交接文档
 
 > 本文件供任何接手此项目的 agent/开发者完整理解项目。请先通读，再动手。
-> 最后更新时间：2026-08-16（main 分支）
+> 最后更新时间：2026-08-27（main 分支）
 
 ## 1. 项目是什么
 
@@ -14,7 +14,7 @@
 ## 2. 当前状态（截至 2026-08-14）
 
 - **稳定运行中**：08-09 ~ 08-14 每天 9/9 全发、每人恰好 1 条、无漏发无重复（核对方法见 §8）。
-- 发送时间：cron `0 19 * * *`（UTC）= 北京时间次日 03:00；GitHub 延迟后实际约 **北京 03:30~04:00** 送达。
+- 发送时间：cron `40 16 * * *`（UTC）= 北京时间次日 00:40；GitHub 延迟后实际约 **北京 01:10~01:40** 送达。（2026-08-27 由 03:00 调整）
 - cookies 由 keepalive 每 6 小时自动续期回写（密钥最后更新时间即最近一次续期）。
 
 ## 3. 架构与文件
@@ -23,7 +23,7 @@
 
 | 文件 | 作用 | cron（UTC） | 备注 |
 |---|---|---|---|
-| `schedule.yml` | **主发送** | `0 19 * * *` | ⚠️ **修改此文件会触发 GitHub“恶意工作流”审批门禁**，需要仓库所有者手动 Approve；非必要不要改 |
+| `schedule.yml` | **主发送** | `40 16 * * *` | ⚠️ **修改此文件会触发 GitHub“恶意工作流”审批门禁**，需要仓库所有者手动 Approve；非必要不要改 |
 | `catchup.yml` | 兜底触发 | `17 2 / 17 4 / 17 7 * * *` | 查当天是否已有成功发送（用**专用端点** `/actions/workflows/schedule.yml/runs`，created_at 换算北京日期比较；通用端点 `workflow_id` 过滤失效，见 §6.10），没有才 dispatch 主发送；新文件可安全修改 |
 | `keepalive.yml` | cookies 续期 | `23 */12` + `53 */12` | 用现有 cookies 打开 chat 页触发心跳，抓取最新 cookies，用 `SPARKFLOW_PAT` 回写 `COOKIES_SAKURO_MAI` |
 | `review.yml` | 发送后核对 | workflow_run 触发 | 下载 run-logs 工件解析 app.log；cookies 过期发专属邮件（SMTP 未配置则跳过）；识别跳过标记 |
@@ -99,7 +99,7 @@
 4. **runner 时区 UTC**：见 §5，必须 `timezone_id="Asia/Shanghai"`。
 5. **“N小时前”跨天**：凌晨运行时昨天下午的消息显示“17小时前”，按格式匹配会误判 → 真实时间解析。
 6. **重复发送事故**：匹配后未把目标标记已发送 → 无限循环（zjj 收到 224 条）→ `sent_targets` + 硬上限。
-7. **GitHub cron 延迟/丢失**：cron 可能延迟 3-5 小时甚至跳过（官方特性）。对策：主 cron 提前（北京 03:00）+ catchup 多时段兜底 + 应用层幂等。**不要承诺“准时 9 点”**。
+7. **GitHub cron 延迟/丢失**：cron 可能延迟 3-5 小时甚至跳过（官方特性）。对策：主 cron（北京 00:40，2026-08-27 由 03:00 调整）+ catchup 多时段兜底 + 应用层幂等。**不要承诺“准时 9 点”**。
 8. **工作流审批门禁**：改 `schedule.yml` 会触发 GitHub“potentially malicious workflow”审批；`gh run rerun`、`gh variable set` 等自管理步骤同样触发。**新工作流文件（catchup/review/keepalive）不受影响，可安全修改。**
 9. **review 误报**：0 发送但已有跳过（当天已发）曾误判失败 → 已改为“跳过>0 不算失败”。
 10. **catchup 兜底曾完全失效（2026-08-16 修复）**：原实现用通用端点 `/actions/runs?workflow_id=...` 查询主发送，但实测该端点的 `workflow_id` 过滤参数**完全失效**（不同 workflow_id 返回同样的全量 run），catchup 每次都把 keepalive/catchup 自身的成功运行误当成"主发送已成功"，导致**永远跳过、从不兜底**。修复：改用专用端点 `/actions/workflows/schedule.yml/runs`，并把 created_at（UTC）换算成北京日期再与当天比较（主发送在北京凌晨 = UTC 前一天，字符串前缀比较会跨天误判）。
@@ -144,7 +144,7 @@
 
 ## 10. 注意事项与边界
 
-- GitHub cron 延迟不可控：接受“北京凌晨 3 点触发、3:30-4:00 送达”，catchup 兜底保证当天至少一次。
+- GitHub cron 延迟不可控：接受“北京凌晨 00:40 触发、01:10-01:40 送达”，catchup 兜底保证当天至少一次。
 - SMTP 未配置：cookies 过期时无专属邮件，靠 GitHub 失败通知（工作流名可区分）。
 - 搜索依赖昵称映射；个别目标映射缺失或搜索失败时会走滚动兜底，偶发“未找到”只告警不失败。
 - cookies 是账号凭证：不回显、不打印、不写进日志/文档。
@@ -156,7 +156,7 @@
 
 ```text
 你在接手一个抖音火花自动续火项目（仓库 Luolingli/DouYinSparkFlow，工作目录 .../DouYinSparkFlow）。
-项目由 GitHub Actions 每天给 9 个好友各发一条"今日火花"消息，目前稳定运行中。
+项目由 GitHub Actions 每天给 10 个好友各发一条"今日火花"消息，目前稳定运行中。
 动手前必须通读仓库根目录 AGENTS.md，重点：核心逻辑在 core/tasks.py；搜索直达+滚动兜底；
 浏览器必须 timezone_id=Asia/Shanghai；当天去重基于聊天面板时间（北京时间解析）。
 
