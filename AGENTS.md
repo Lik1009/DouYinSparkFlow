@@ -24,7 +24,7 @@
 | 文件 | 作用 | cron（UTC） | 备注 |
 |---|---|---|---|
 | `schedule.yml` | **主发送** | `40 16 * * *` | ⚠️ **修改此文件会触发 GitHub“恶意工作流”审批门禁**，需要仓库所有者手动 Approve；非必要不要改 |
-| `catchup.yml` | 兜底触发 | `17 2 / 17 4 / 17 7 * * *` | 查当天是否已有成功发送（用**专用端点** `/actions/workflows/schedule.yml/runs`，created_at 换算北京日期比较；通用端点 `workflow_id` 过滤失效，见 §6.10），没有才 dispatch 主发送；新文件可安全修改 |
+| `catchup.yml` | 兜底触发 | `17 2 / 17 4 / 17 7 * * *` | 查当天是否已有成功发送（用**专用端点** `/actions/workflows/schedule.yml/runs`，created_at 换算北京日期比较；通用端点 `workflow_id` 过滤失效，见 §6.10），没有才 dispatch 主发送；**新会话硬化期（<6h，见 §6.12）内拒绝 dispatch**；新文件可安全修改 |
 | `keepalive.yml` | cookies 续期 | `23 */12` + `53 */12` | 用现有 cookies 打开 chat 页触发心跳，抓取最新 cookies，用 `SPARKFLOW_PAT` 回写 `COOKIES_SAKURO_MAI` |
 | `review.yml` | 发送后核对 | workflow_run 触发 | 下载 run-logs 工件解析 app.log；cookies 过期发专属邮件（SMTP 未配置则跳过）；识别跳过标记 |
 | `schedule_dev.yml` / `schedule_api.yml` | 上游 fork 测试用 | - | 在本仓库为 disabled_fork，忽略 |
@@ -104,6 +104,7 @@
 9. **review 误报**：0 发送但已有跳过（当天已发）曾误判失败 → 已改为“跳过>0 不算失败”。
 10. **catchup 兜底曾完全失效（2026-08-16 修复）**：原实现用通用端点 `/actions/runs?workflow_id=...` 查询主发送，但实测该端点的 `workflow_id` 过滤参数**完全失效**（不同 workflow_id 返回同样的全量 run），catchup 每次都把 keepalive/catchup 自身的成功运行误当成"主发送已成功"，导致**永远跳过、从不兜底**。修复：改用专用端点 `/actions/workflows/schedule.yml/runs`，并把 created_at（UTC）换算成北京日期再与当天比较（主发送在北京凌晨 = UTC 前一天，字符串前缀比较会跨天误判）。
 11. **catchup 的 `gh workflow run` 必须显式 `--repo`（2026-08-26 暴露、08-27 修复）**：catchup 任务没有 checkout 步骤，工作目录不是 git 仓库，gh 无法从 remote 推断仓库 → `fatal: not a git repository` → dispatch 失败。此前该 bug 从未暴露，因为 catchup 的兜底分支（§6.10 修复前）从未真正走到过。2026-08-26 cookies 失效首次真实触发兜底时暴露。修复：`gh workflow run "DouYin Spark Flow Schedule Run" --repo Luolingli/DouYinSparkFlow`。
+12. **新会话硬化期：扫码后 2~6h 内美国访问会被风控杀死（2026-08-27 事故，高置信推断）**：08-27 当天 2 个新会话分别在美国访问 +1.5min/+2min 后死亡；历史 08-02 会话（首次美国访问 +26.4h）与 08-17 会话（≥+6.2h）均存活 8 天/数周。会话首次使用前 80 秒内功能正常（聊天界面可渲染），之后才被杀——符合"访问触发风控、延迟生效"。对策（已全部落地）：① 本地扫码脚本 `keepalive.js` 扫码成功后写仓库变量 `LAST_RESCAN_UTC`（UTC 时间戳）；② catchup 在硬化期（距标记 <6h）内拒绝 dispatch；③ 操作规则：**重新扫码后 6 小时内不要手动触发任何使用 cookies 的 GitHub 工作流**。注意 GitHub cron 漂移可能让 catchup 在非计划时刻触发（08-27 实测 20:50/23:13 触发，其中 23:13 一次 dispatch 杀死了 73 分钟前刚扫码的会话）——硬化期保护就是为此设计的。
 
 ## 7. 关键选择器（抖音改版时首要检查点）
 
@@ -186,4 +187,6 @@
 - 实测案例：ai-news-douyin 项目的 douyin web login 扫码后，本项目的聊天会话 cookies 全部失效（keepalive 也救不回来）。
 - 本项目与 ai-news-douyin **共享同一份会话 cookies**：COOKIES_SAKURO_MAI（secret） ↔ ~/.config/douyin_keepalive/cookies.json ↔ ai-news-douyin 的 data/web_cookies.json。
 - **任何一方重新扫码后，必须把新 cookies 同步到另外两处**（gh secret set COOKIES_SAKURO_MAI --env user-data --repo Luolingli/DouYinSparkFlow + 复制本地文件），否则另一方必挂。
+- 本项目本地扫码（`keepalive.js`）成功后会**自动**写仓库变量 `LAST_RESCAN_UTC`（供 catchup 硬化期保护，见 §6.12）；若通过其他途径更新 cookies，需手动同步该标记（或直接删除该变量——缺失时 catchup 按原逻辑 dispatch）。
+- **扫码后 6 小时内不要手动触发任何使用 cookies 的 GitHub 工作流**（新会话硬化期，见 §6.12）。
 - 日常运行（keepalive 心跳、发布后回写）不会创建新会话，可放心共存；**不要**为了"保险"而主动重新扫码。
