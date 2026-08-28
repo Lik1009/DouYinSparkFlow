@@ -107,6 +107,7 @@
 10. **catchup 兜底曾完全失效（2026-08-16 修复）**：原实现用通用端点 `/actions/runs?workflow_id=...` 查询主发送，但实测该端点的 `workflow_id` 过滤参数**完全失效**（不同 workflow_id 返回同样的全量 run），catchup 每次都把 keepalive/catchup 自身的成功运行误当成"主发送已成功"，导致**永远跳过、从不兜底**。修复：改用专用端点 `/actions/workflows/schedule.yml/runs`，并把 created_at（UTC）换算成北京日期再与当天比较（主发送在北京凌晨 = UTC 前一天，字符串前缀比较会跨天误判）。
 11. **catchup 的 `gh workflow run` 必须显式 `--repo`（2026-08-26 暴露、08-27 修复）**：catchup 任务没有 checkout 步骤，工作目录不是 git 仓库，gh 无法从 remote 推断仓库 → `fatal: not a git repository` → dispatch 失败。此前该 bug 从未暴露，因为 catchup 的兜底分支（§6.10 修复前）从未真正走到过。2026-08-26 cookies 失效首次真实触发兜底时暴露。修复：`gh workflow run "DouYin Spark Flow Schedule Run" --repo Luolingli/DouYinSparkFlow`。
     > 2026-08-28 说明：08-27 事故曾据此推断“新会话硬化期（扫码后 6h 内美国访问杀会话）”并落地 catchup 硬化期保护，08-28 经复核认为风控假设证据不足（此前 08-02~08-25 自然间隔 14-39h 从未触发该条件，4次小间隔死亡亦可用并发回写等解释），已按早期风格回退该保护，回归早期可验证修复路径。ai-news-douyin 已弃用，不再共享会话。
+13. **新会话信任窗口 + keepalive 误判级联（2026-08-28 根因确认，本地补丁已修）**：扫码后 <6h 内，任何**非创建端/自动化访问**（headless 指纹，**与 IP 无关**——S10/S11 本地国内 IP 实测同样被回登录页/空壳页）都会被抖音风控以登录页或空列表回应；窗口期 ≥6.2h 的会话则正常（08-02/08-17 存活先例）。这是账号风控的信任评分，不是代码 bug（secret 已哈希比对逐字节一致）。**级联放大器**：keepalive.js 曾把窗口期回退页误判为"登录失效"→ 弹二维码 → 用户重扫 → §12 单会话规则替换掉可能还活着的会话（08-28 下午 S10→S11→S12 三次级联扫码）。**修复**（本地文件 ~/.config/douyin_keepalive/keepalive.js，不在仓库）：检测到登录标记时检查本地 cookies.json 龄，<6h 判定为窗口期回退、不弹扫码、记录日志退出；≥6h 才判真失效。操作规则：**扫码后 6 小时内不要用任何其他浏览器/脚本/工作流访问该会话**（原配置"晚间扫码、凌晨发送"天然满足）。
 
 ## 7. 关键选择器（抖音改版时首要检查点）
 
