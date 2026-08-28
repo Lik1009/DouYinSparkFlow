@@ -235,6 +235,83 @@ def _check_browser_timezone():
         return ("B01", False, f"读取 tasks.py 失败: {e}")
 
 
+def _deep_dive_L02():
+    """L02 深挖：区分自然过期/频次风控/捕获不完整/同步不一致"""
+    details = []
+    suggestion = ""
+    # 1. 捕获完整性：关键 cookie 存在性
+    try:
+        local = Path.home() / ".config/douyin_keepalive/cookies.json"
+        if local.exists():
+            cookies = json.loads(local.read_text(encoding="utf-8"))
+            names = {c.get("name") for c in cookies}
+            critical = {"sessionid", "sessionid_ss", "sid_guard", "sid_tt", "uid_tt"}
+            missing = critical - names
+            if missing:
+                details.append(f"捕获不完整：缺关键 {missing}")
+                suggestion = "建议：等待 5 分钟后 `bash ~/.config/douyin_keepalive/run.sh` 重扫，确保扫码后等待 8s 再捕获"
+            else:
+                details.append("捕获完整：关键 session 均存在")
+        else:
+            details.append("本地 cookies.json 不存在")
+    except Exception as e:
+        details.append(f"读取本地 cookies 失败: {e}")
+
+    # 2. 频次风控：查询近 30 分钟内 GH 侧使用 cookies 的 runs 次数
+    try:
+        out = subprocess.run(
+            ["gh", "run", "list", "--repo", "Luolingli/DouYinSparkFlow", "--limit", "10", "--json", "createdAt,conclusion"],
+            capture_output=True, text=True, timeout=12
+        )
+        if out.returncode == 0:
+            runs = json.loads(out.stdout)
+            now = datetime.now(timezone.utc)
+            recent = 0
+            for r in runs:
+                try:
+                    ct = datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00"))
+                    if (now - ct).total_seconds() < 1800:
+                        recent += 1
+                except Exception:
+                    pass
+            if recent >= 3:
+                details.append(f"频次过高：30 分钟内 {recent} 次 GH 侧访问（阈值 3）")
+                suggestion = suggestion or "建议：冷却 60-90 分钟零操作后单次重扫，扫后只发一次（避免短间隔二次访问）"
+            else:
+                details.append(f"频次正常：30 分钟内 {recent} 次")
+    except Exception as e:
+        details.append(f"频次查询失败: {e}")
+
+    # 3. 同步一致性：本地 vs 远端 sessionid 是否一致（通过 hash 比对，不打印值）
+    try:
+        local_cookies = json.loads((Path.home() / ".config/douyin_keepalive/cookies.json").read_text(encoding="utf-8"))
+        local_sid = next((c["value"] for c in local_cookies if c["name"] == "sessionid"), "")
+        # 远端通过 gh api 获取 secret 的 hash（不打印明文）
+        # 由于 secrets 不可直接读取，此处仅提示检查方式
+        details.append("同步检查：需人工 `gh secret` 与本地 hash 对比（已弱化 ai-news 耦合，此项低优）")
+    except Exception:
+        pass
+
+    # 4. 自然过期：文件 mtime 与当前间隔
+    try:
+        mtime = (Path.home() / ".config/douyin_keepalive/cookies.json").stat().st_mtime
+        age_h = (time.time() - mtime) / 3600
+        if age_h > 24 * 7:
+            details.append(f"自然过期可疑：文件已 {age_h:.1f}h 未更新（>7 天阈值）")
+            suggestion = suggestion or "建议：自然过期，重扫即可"
+        else:
+            details.append(f"文件新鲜度：{age_h:.1f}h 前更新")
+    except Exception:
+        pass
+
+    # 5. 本地 vs 远端登录差异：若本地 L02 失败而上次 GH 成功曾在短间隔内，则为风控
+    # 已在上层 L02 判定，此处仅补充
+    if not suggestion:
+        suggestion = "建议：先冷却 60 分钟，再单次重扫 + 单次全量（带 DEBUG_BYPASS_DEDUP=1 补 10 人）"
+
+    return details, suggestion
+
+
 def _check_login_and_friends():
     """L01/L02/F01/F02/F03 需启动浏览器（只读）— 优先 python-playwright，本地回退到 node-playwright"""
     checks = []
@@ -522,10 +599,15 @@ def run_all():
     # 判定主因：优先级最小的失败项
     failures = [(c, m) for c, ok, m in results if not ok]
     if failures:
-        primary = min(failures, key=lambda x: PRIORITY.get(x[0][:3] if x[0][:2] in ("C0",) else x[0], 99))
+        primary = min(failures, key=lambda x: PRIORITY.get(x[0], 99))
         primary_code, primary_msg = primary
     else:
         primary_code, primary_msg = "OK", "全部检查通过"
+
+    # L02 深挖与解决建议
+    deep_details, suggestion = [], ""
+    if primary_code == "L02":
+        deep_details, suggestion = _deep_dive_L02()
 
     # 输出
     DIAG_DIR.mkdir(parents=True, exist_ok=True)
@@ -534,6 +616,8 @@ def run_all():
         "environment": os.getenv("GITHUB_ACTIONS") == "true" and "CI" or "LOCAL",
         "primary": {"code": primary_code, "message": primary_msg},
         "checks": [{"code": c, "ok": ok, "message": m} for c, ok, m in results],
+        "deep_dive": deep_details,
+        "suggestion": suggestion,
     }
     # 按优先级排序
     report["checks"].sort(key=lambda x: PRIORITY.get(x["code"], 99))
@@ -545,6 +629,12 @@ def run_all():
     lines = []
     lines.append(f"诊断时间: {report['timestamp']} ({report['environment']})")
     lines.append(f"主因: {primary_code} - {primary_msg}")
+    if deep_details:
+        lines.append("")
+        lines.append("L02 深挖：")
+        for d in deep_details:
+            lines.append(f"  - {d}")
+        lines.append(f"  解决: {suggestion}")
     lines.append("")
     lines.append("分项检查（按优先级）：")
     for ch in report["checks"]:
