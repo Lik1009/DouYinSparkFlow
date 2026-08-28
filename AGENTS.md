@@ -154,28 +154,45 @@
 
 ## 11. 继续工作 Prompt（复制给下一个 agent）
 
+> 完整版 prompt 与交接文件见 **HANDOFF-20260828.md §0**（含硬化期规则、三处同步、操作手册引用），两者保持同步。
+> 核心增量（2026-08-28 事故后确立）：新会话硬化期（扫码后 6h 内禁止美国访问，catchup 已内置保护）；
+> 安全扫码窗口北京 18:40 后；扫码后不要立刻 Approve 审批门禁；扫码后同步 ai-news-douyin。
+
 把下面这段完整发给接手 agent：
 
 ```text
 你在接手一个抖音火花自动续火项目（仓库 Luolingli/DouYinSparkFlow，工作目录 .../DouYinSparkFlow）。
-项目由 GitHub Actions 每天给 10 个好友各发一条"今日火花"消息，目前稳定运行中。
-动手前必须通读仓库根目录 AGENTS.md，重点：核心逻辑在 core/tasks.py；搜索直达+滚动兜底；
-浏览器必须 timezone_id=Asia/Shanghai；当天去重基于聊天面板时间（北京时间解析）。
+项目由 GitHub Actions 每天北京时间 00:40（cron "40 16 * * *" UTC）给 10 个好友各发一条"今日火花"消息。
+动手前必须通读仓库根目录 AGENTS.md（长期文档）和 HANDOFF-20260828.md（最近事故复盘+当前待办），
+重点：核心逻辑 core/tasks.py（搜索直达+滚动兜底）；浏览器必须 timezone_id=Asia/Shanghai；
+当天去重基于聊天面板消息时间（北京时间解析）；同一抖音账号 web 会话全账号唯一（§12）。
 
-硬性约束：
+【最高优先级规则：新会话硬化期】（2026-08-28 事故后确立，违反 = cookies 被抖音风控杀死）
+- 扫码后 6 小时内，禁止任何 GitHub（美国 runner）工作流访问 cookies（主发送/catchup/keepalive/手动 dispatch）。
+- catchup 已内置保护（读仓库变量 LAST_RESCAN_UTC，距扫码 <6h 拒绝 dispatch），手动操作必须自觉遵守。
+- 安全扫码窗口：北京时间 18:40 之后扫码（保证次日 00:40 发送距扫码 ≥6h）。
+  白天扫码可以，但当天 00:40 发送必然失败或杀会话，当天火花靠保护期后的 catchup 兜底（不保证）。
+- 扫码后不要立刻 Approve 审批门禁中排队的 run（Approve 会让排队 run 立刻开跑 = 立即美国访问）。
+- 依据：扫码后 ≤3.4min 美国访问 4/4 死亡；≥6.2h 有存活先例。按 6h 保守边界执行。
+
+【cookies 三处同步】（§12）：本地 ~/.config/douyin_keepalive/cookies.json ↔ GitHub secret COOKIES_SAKURO_MAI（env user-data）↔ ai-news-douyin/data/web_cookies.json。
+本地扫码（bash ~/.config/douyin_keepalive/run.sh）自动完成前两处 + 写 LAST_RESCAN_UTC；第三处必须手动复制（脚本见 HANDOFF §6.3）。
+
+硬性约束（用户明确要求）：
 1. 调试/测试发送只允许发给 zjj00000010 和 84611333990 两个人，禁止发给其他好友。
-   方式：临时设置仓库变量 DEBUG_TARGETS=['zjj00000010','84611333990'] 和 DEBUG_BYPASS_DEDUP=1，
-   触发后必须清空变量。
-2. 不要修改 .github/workflows/schedule.yml，除非用户明确要求（修改会触发 GitHub 审批门禁）。
+   方式：临时设仓库变量 DEBUG_TARGETS='["zjj00000010","84611333990"]' + DEBUG_BYPASS_DEDUP=1，用完必须删除。
+2. 不要修改 .github/workflows/schedule.yml，除非用户明确要求（触发 GitHub 审批门禁，需用户手动 Approve）。
 3. 不要打印/泄露 COOKIES_SAKURO_MAI 的值。
-4. 不要对真实账号做未经用户确认的多轮/大批量发送；不要自行反复手动触发生产发送。
+4. 不对真实账号做未经用户确认的多轮/大批量发送；不自行反复手动触发生产发送。
+5. 操作前先向用户确认要解决的问题；扫码、改时间、触发生产发送等重大操作先征得同意。
 
-验证一个改动时：跑完看日志"任务完成，共发送 N 条消息，跳过 M 条"和 review 输出；
-当天已发过的好友应被跳过（不会重复发）。
-
-常用命令：gh run list/view、gh workflow run "DouYin Spark Flow Schedule Run"。
-如果 cookies 失效（日志报"未登录"），告诉用户需要重新导出 cookies 或本地扫码续期。
-开始前先向我（用户）确认当前要解决的问题，再动手。
+验证与常用命令：
+- 每天成功标志：日志 "任务完成，共发送 10 条消息，跳过 0 条" + review "10/10 检查通过"
+- gh run list/view --repo Luolingli/DouYinSparkFlow
+- 手动触发：gh workflow run "DouYin Spark Flow Schedule Run" --repo Luolingli/DouYinSparkFlow
+- 硬化期标记：gh api repos/Luolingli/DouYinSparkFlow/actions/variables/LAST_RESCAN_UTC --jq .value
+- 本地扫码：bash ~/.config/douyin_keepalive/run.sh（弹二维码，15 分钟有效；launchd 每 6h 自动跑）
+- 工件：gh run download <id> --repo Luolingli/DouYinSparkFlow -n run-logs
 ```
 
 ---
