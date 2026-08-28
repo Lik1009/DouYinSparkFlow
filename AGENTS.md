@@ -105,6 +105,7 @@
 10. **catchup 兜底曾完全失效（2026-08-16 修复）**：原实现用通用端点 `/actions/runs?workflow_id=...` 查询主发送，但实测该端点的 `workflow_id` 过滤参数**完全失效**（不同 workflow_id 返回同样的全量 run），catchup 每次都把 keepalive/catchup 自身的成功运行误当成"主发送已成功"，导致**永远跳过、从不兜底**。修复：改用专用端点 `/actions/workflows/schedule.yml/runs`，并把 created_at（UTC）换算成北京日期再与当天比较（主发送在北京凌晨 = UTC 前一天，字符串前缀比较会跨天误判）。
 11. **catchup 的 `gh workflow run` 必须显式 `--repo`（2026-08-26 暴露、08-27 修复）**：catchup 任务没有 checkout 步骤，工作目录不是 git 仓库，gh 无法从 remote 推断仓库 → `fatal: not a git repository` → dispatch 失败。此前该 bug 从未暴露，因为 catchup 的兜底分支（§6.10 修复前）从未真正走到过。2026-08-26 cookies 失效首次真实触发兜底时暴露。修复：`gh workflow run "DouYin Spark Flow Schedule Run" --repo Luolingli/DouYinSparkFlow`。
 12. **新会话硬化期：扫码后 2~6h 内美国访问会被风控杀死（2026-08-27 事故，高置信推断）**：08-27 当天 2 个新会话分别在美国访问 +1.5min/+2min 后死亡；历史 08-02 会话（首次美国访问 +26.4h）与 08-17 会话（≥+6.2h）均存活 8 天/数周。会话首次使用前 80 秒内功能正常（聊天界面可渲染），之后才被杀——符合"访问触发风控、延迟生效"。对策（已全部落地）：① 本地扫码脚本 `keepalive.js` 扫码成功后写仓库变量 `LAST_RESCAN_UTC`（UTC 时间戳）；② catchup 在硬化期（距标记 <6h）内拒绝 dispatch；③ 操作规则：**重新扫码后 6 小时内不要手动触发任何使用 cookies 的 GitHub 工作流**。注意 GitHub cron 漂移可能让 catchup 在非计划时刻触发（08-27 实测 20:50/23:13 触发，其中 23:13 一次 dispatch 杀死了 73 分钟前刚扫码的会话）——硬化期保护就是为此设计的。
+   补充（08-28 实测）：① S5 会话首次美国访问在 +3.4min，连登录检查都没通过就被杀（S1/S2 的首次访问能通过登录检查、之后才死，机制细节不确定，安全线只有 ≥6.2h 有存活证据）；② **审批门禁交互**：改 schedule.yml 后工作流被隔离，cron 触发的 run 会排队（实测排队 86 分钟），期间 Approve 会让排队 run 立刻开跑并捕获当时的 cookies——所以**扫码后不要立刻 Approve/等待审批中的 run**，两者叠加等于扫码后立即美国访问；③ 安全扫码窗口：北京 **18:40 之后**扫码（保证次日 00:40 发送距扫码 ≥6h）；白天扫码则只能靠 catchup 硬化期保护兜底（当天 00:40 发送必然失败或杀会话，当天火花由保护期后的 catchup 漂移/兜底抢救，不保证）。
 
 ## 7. 关键选择器（抖音改版时首要检查点）
 
