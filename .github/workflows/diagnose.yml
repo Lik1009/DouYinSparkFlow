@@ -1,0 +1,53 @@
+name: DouYin Diagnose
+
+# 自洽诊断：只读检查，不写密钥，不触发风控写入
+# - 手动触发：gh workflow run "DouYin Diagnose" --repo Luolingli/DouYinSparkFlow
+# - 自动触发：主发送失败后（workflow_run），与 review 并行，提供结构化归因
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["DouYin Spark Flow Schedule Run"]
+    types: [completed]
+
+concurrency:
+  group: douyin-diagnose
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: user-data
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install playwright
+      - name: Ensure browsers are installed
+        run: playwright install chromium --with-deps --only-shell
+      - name: Export env for diagnose
+        env:
+          VARS_JSON: ${{ toJson(vars) }}
+          SECRETS_JSON: ${{ toJson(secrets) }}
+        run: python utils/export_github_env.py
+      - name: Run diagnose (read-only)
+        run: |
+          set -e
+          python utils/diagnose.py 2>&1 | tee logs/diagnose.log
+          echo "--- diagnose.json ---"
+          cat logs/diagnose/diagnose.json || true
+        continue-on-error: true
+      - name: Upload diagnose artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnose-logs
+          path: |
+            logs/diagnose/
+            logs/screenshots/
+          if-no-files-found: warn

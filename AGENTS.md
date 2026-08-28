@@ -1,7 +1,7 @@
 # DouYinSparkFlow 项目交接文档
 
 > 本文件供任何接手此项目的 agent/开发者完整理解项目。请先通读，再动手。
-> 最后更新时间：2026-08-28（回退硬化期、剔除 ai-news 耦合，回归早期风格）
+> 最后更新时间：2026-08-28（回退硬化期、剔除 ai-news、新增自洽诊断 `utils/diagnose.py` + `diagnose.yml`）
 
 ## 1. 项目是什么
 
@@ -27,6 +27,7 @@
 | `catchup.yml` | 兜底触发 | `17 2 / 17 4 / 17 7 * * *` | 查当天是否已有成功发送（用**专用端点** `/actions/workflows/schedule.yml/runs`，created_at 换算北京日期比较；通用端点 `workflow_id` 过滤失效，见 §6.10），没有才 dispatch 主发送；新文件可安全修改 |
 | `keepalive.yml` | cookies 续期 | `23 */12` + `53 */12` | 用现有 cookies 打开 chat 页触发心跳，抓取最新 cookies，用 `SPARKFLOW_PAT` 回写 `COOKIES_SAKURO_MAI` |
 | `review.yml` | 发送后核对 | workflow_run 触发 | 下载 run-logs 工件解析 app.log；cookies 过期发专属邮件（SMTP 未配置则跳过）；识别跳过标记 |
+| `diagnose.yml` | 自洽诊断 | 手动/主发送失败后 | 只读：C/N/B/L/F/D/S/R 分层检查，输出 `logs/diagnose/diagnose.json`，主因按优先级判定，不写密钥 |
 | `schedule_dev.yml` / `schedule_api.yml` | 上游 fork 测试用 | - | 在本仓库为 disabled_fork，忽略 |
 
 ### 核心代码
@@ -41,6 +42,7 @@
 - `utils/notify.py`：SMTP 邮件（`send_email`，未配置时跳过不阻塞）
 - `utils/review_run.py`：review 工作流的判定逻辑
 - `utils/cookie_keepalive.py`：keepalive 工作流的续期+回写逻辑
+- `utils/diagnose.py`：自洽诊断（C/N/B/L/F/D/S/R 分层，优先级主因，只读，本地/CI 同脚本）
 - `main.py`：入口，加载 .env 后调 `runTasks()`
 
 ## 4. 配置
@@ -127,6 +129,7 @@
 
 - 运行日志关键行：`任务完成，共发送 10 条消息，跳过 0 条`（每天应如此；N = TASKS 里 targets 总数）。
 - Review 输出：`[review] 主任务结果: success，日志发送数: 10/10` / `检查通过`。
+- 诊断输出：`logs/diagnose/diagnose.json`（主因 `primary.code`）+ `diagnose.txt`；`DIAG_L02` 等与 `core/tasks.py` 日志前缀一致。
 - 工件 `run-logs`：`logs/app.log` + `logs/screenshots/发送后-*.png`（每发一人一张）。
 - 当天重复触发应全跳过（日志出现 `SKIP_ALL_ALREADY_SENT`），review 判通过。
 - 常用命令：
@@ -134,6 +137,8 @@
   gh run list --repo Luolingli/DouYinSparkFlow --limit 10
   gh run view --repo Luolingli/DouYinSparkFlow <run_id> --log
   gh workflow run "DouYin Spark Flow Schedule Run" --repo Luolingli/DouYinSparkFlow   # 手动触发
+  python utils/diagnose.py                              # 本地只读诊断（与 CI 同脚本）
+  gh workflow run "DouYin Diagnose" --repo Luolingli/DouYinSparkFlow  # CI 诊断
   ```
 
 ## 9. 调试规范（用户明确要求）

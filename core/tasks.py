@@ -87,10 +87,10 @@ def retry_operation(name, operation, retries=3, delay=2, *args, **kwargs):
             return operation(*args, **kwargs)
         except Exception as e:
             if attempt < retries - 1:
-                logger.warning(f"{name} 失败，正在重试第 {attempt + 1} 次，错误：{e}")
+                logger.warning(f"DIAG_L01 {name} 失败，正在重试第 {attempt + 1} 次，错误：{e}")
                 time.sleep(delay)
             else:
-                logger.error(f"{name} 失败，已达到最大重试次数，错误：{e}")
+                logger.error(f"DIAG_L01 {name} 失败，已达到最大重试次数，错误：{e}")
                 raise
 
 
@@ -130,7 +130,7 @@ def wait_and_click_with_retry(page, username, stage, selector, retries=3, timeou
         except Exception as e:
             _snapshot_on_failure(page, username, f"{stage}-第{attempt}次")
             logger.warning(
-                f"账号 {username} [{stage}] 第 {attempt} 次尝试失败: {e}，刷新页面重试"
+                f"DIAG_F02 账号 {username} [{stage}] 第 {attempt} 次尝试失败: {e}，刷新页面重试"
             )
             try:
                 page.reload(wait_until="domcontentloaded")
@@ -275,7 +275,7 @@ def scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup=Fa
     # 等待会话列表加载完成（带刷新重试）
     wait_and_click_with_retry(page, username, "会话列表", CONVERSATION_LIST_SELECTOR)
     if page.locator(CONVERSATION_ITEM_SELECTOR).count() == 0:
-        logger.warning(f"账号 {username} 会话列表为空，无可发送对象")
+        logger.warning(f"DIAG_F01 账号 {username} 会话列表为空，无可发送对象")
         return
 
     # 等待会话标题从数字 ID 解析为昵称（最多约 60 秒），避免扫描抢跑
@@ -407,7 +407,7 @@ def scroll_and_select_user(page, username, targets, stats, bypass_daily_dedup=Fa
 
 def do_user_task(browser, username, cookies, targets, bypass_daily_dedup=False):
     # 关键：强制浏览器使用北京时区，否则 runner(UTC) 下抖音消息时间显示为 UTC，
-    # 导致“今天/昨天”判断错乱（昨天 10:38 会显示成 02:38 被误判为今天）
+    # 导致“今天/昨天”判断错乱（昨天 10:38 会显示成 02:38 被误判为今天）[DIAG_B01]
     context = browser.new_context(timezone_id="Asia/Shanghai")
     context.set_default_navigation_timeout(config["browserTimeout"])
     context.set_default_timeout(config["browserTimeout"])
@@ -434,11 +434,12 @@ def do_user_task(browser, username, cookies, targets, bypass_daily_dedup=False):
         body_text = page.locator("body").inner_text(timeout=5000)
         if any(m in body_text for m in LOGIN_MARKERS):
             _snapshot_on_failure(page, username, "未登录检测")
+            logger.error(f"DIAG_L02 账号 {username} 未检测到登录态（页面显示登录入口）")
             raise RuntimeError(
                 f"账号 {username} 未检测到登录态（页面显示登录入口），"
-                "Cookies 可能已过期或被风控拒绝，请重新导出并更新 COOKIES_SAKURO_MAI 密钥"
+                "Cookies 可能已过期或被风控拒绝，请重新导出并更新 COOKIES_SAKURO_MAI 密钥 [DIAG_L02]"
             )
-        logger.debug(f"账号 {username} 登录态检查通过")
+        logger.debug(f"账号 {username} 登录态检查通过 [DIAG_OK L02]")
     except RuntimeError:
         raise
     except Exception as e:
