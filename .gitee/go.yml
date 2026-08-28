@@ -1,0 +1,45 @@
+name: Gitee Send (Domestic)
+
+# 国内免费常驻：Gitee Go (500min/月) 走国内 IP，避美国风控
+# 触发：每天 16:40 UTC (北京次日 00:40) + 手动
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "40 16 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies (tuna mirror)
+        run: |
+          python -m pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn
+          pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn
+      - name: Ensure browsers (npmmirror)
+        run: |
+          export PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
+          export PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/chrome-for-testing
+          playwright install chromium --with-deps --only-shell
+      - name: Export env (Gitee vars/secrets -> .env)
+        env:
+          # Gitee Go 变量与凭据需在 Gitee 仓库设置页配置，键名与 GitHub 保持一致
+          VARS_JSON: ${{ toJson(vars) }}
+          SECRETS_JSON: ${{ toJson(secrets) }}
+        run: python utils/export_github_env.py
+      - name: Run DouYin Spark Flow
+        run: python main.py
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-logs
+          path: logs/
+          if-no-files-found: warn
