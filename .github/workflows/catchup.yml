@@ -35,25 +35,8 @@ jobs:
           fi
           TODAY=$(TZ=Asia/Shanghai date +%F)
           echo "今天(北京时间): $TODAY | 最近成功发送(北京日期): ${LAST_BJ:-无}"
-          # 新会话硬化期保护（2026-08-27 事故）：扫码后 6 小时内美国 runner 访问
-          # 会触发抖音风控杀死新会话（实测 ≤2h 死，≥6.2h 有存活先例）。
-          # 本地扫码脚本 keepalive.js 会写仓库变量 LAST_RESCAN_UTC，硬化期内不 dispatch。
-          # GitHub cron 漂移可能让 catchup 在任意时刻触发（实测 20:50/23:13 触发过），
-          # 此保护防止它误杀刚扫码的新会话。
-          IN_HARDSHEN=0
-          RESCAN_UTC=$(gh api repos/Luolingli/DouYinSparkFlow/actions/variables/LAST_RESCAN_UTC --jq '.value' 2>/dev/null || echo "")
-          if [ -n "$RESCAN_UTC" ]; then
-            RESCAN_EPOCH=$(date -d "$RESCAN_UTC" +%s 2>/dev/null || echo "")
-            if [ -n "$RESCAN_EPOCH" ]; then
-              AGE_MIN=$(( ( $(date +%s) - RESCAN_EPOCH ) / 60 ))
-              echo "距上次扫码: ${AGE_MIN} 分钟"
-              if [ "$AGE_MIN" -lt 360 ]; then IN_HARDSHEN=1; fi
-            fi
-          fi
           if [ -n "$LAST_BJ" ] && [ "$LAST_BJ" = "$TODAY" ]; then
             echo "今天已成功发送过，跳过"
-          elif [ "$IN_HARDSHEN" = "1" ]; then
-            echo "新会话硬化期（扫码后 <6 小时），跳过兜底，避免美国访问触发风控杀死新会话"
           else
             echo "今天尚未成功发送，触发发送工作流"
             # 必须显式 --repo：catchup 没有 checkout 步骤，工作目录不是 git 仓库，

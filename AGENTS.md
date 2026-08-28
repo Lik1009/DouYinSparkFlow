@@ -1,7 +1,7 @@
 # DouYinSparkFlow 项目交接文档
 
 > 本文件供任何接手此项目的 agent/开发者完整理解项目。请先通读，再动手。
-> 最后更新时间：2026-08-27（main 分支）
+> 最后更新时间：2026-08-28（回退硬化期、剔除 ai-news 耦合，回归早期风格）
 
 ## 1. 项目是什么
 
@@ -24,7 +24,7 @@
 | 文件 | 作用 | cron（UTC） | 备注 |
 |---|---|---|---|
 | `schedule.yml` | **主发送** | `40 16 * * *` | ⚠️ **修改此文件会触发 GitHub“恶意工作流”审批门禁**，需要仓库所有者手动 Approve；非必要不要改 |
-| `catchup.yml` | 兜底触发 | `17 2 / 17 4 / 17 7 * * *` | 查当天是否已有成功发送（用**专用端点** `/actions/workflows/schedule.yml/runs`，created_at 换算北京日期比较；通用端点 `workflow_id` 过滤失效，见 §6.10），没有才 dispatch 主发送；**新会话硬化期（<6h，见 §6.12）内拒绝 dispatch**；新文件可安全修改 |
+| `catchup.yml` | 兜底触发 | `17 2 / 17 4 / 17 7 * * *` | 查当天是否已有成功发送（用**专用端点** `/actions/workflows/schedule.yml/runs`，created_at 换算北京日期比较；通用端点 `workflow_id` 过滤失效，见 §6.10），没有才 dispatch 主发送；新文件可安全修改 |
 | `keepalive.yml` | cookies 续期 | `23 */12` + `53 */12` | 用现有 cookies 打开 chat 页触发心跳，抓取最新 cookies，用 `SPARKFLOW_PAT` 回写 `COOKIES_SAKURO_MAI` |
 | `review.yml` | 发送后核对 | workflow_run 触发 | 下载 run-logs 工件解析 app.log；cookies 过期发专属邮件（SMTP 未配置则跳过）；识别跳过标记 |
 | `schedule_dev.yml` / `schedule_api.yml` | 上游 fork 测试用 | - | 在本仓库为 disabled_fork，忽略 |
@@ -104,8 +104,7 @@
 9. **review 误报**：0 发送但已有跳过（当天已发）曾误判失败 → 已改为“跳过>0 不算失败”。
 10. **catchup 兜底曾完全失效（2026-08-16 修复）**：原实现用通用端点 `/actions/runs?workflow_id=...` 查询主发送，但实测该端点的 `workflow_id` 过滤参数**完全失效**（不同 workflow_id 返回同样的全量 run），catchup 每次都把 keepalive/catchup 自身的成功运行误当成"主发送已成功"，导致**永远跳过、从不兜底**。修复：改用专用端点 `/actions/workflows/schedule.yml/runs`，并把 created_at（UTC）换算成北京日期再与当天比较（主发送在北京凌晨 = UTC 前一天，字符串前缀比较会跨天误判）。
 11. **catchup 的 `gh workflow run` 必须显式 `--repo`（2026-08-26 暴露、08-27 修复）**：catchup 任务没有 checkout 步骤，工作目录不是 git 仓库，gh 无法从 remote 推断仓库 → `fatal: not a git repository` → dispatch 失败。此前该 bug 从未暴露，因为 catchup 的兜底分支（§6.10 修复前）从未真正走到过。2026-08-26 cookies 失效首次真实触发兜底时暴露。修复：`gh workflow run "DouYin Spark Flow Schedule Run" --repo Luolingli/DouYinSparkFlow`。
-12. **新会话硬化期：扫码后 2~6h 内美国访问会被风控杀死（2026-08-27 事故，高置信推断）**：08-27 当天 2 个新会话分别在美国访问 +1.5min/+2min 后死亡；历史 08-02 会话（首次美国访问 +26.4h）与 08-17 会话（≥+6.2h）均存活 8 天/数周。会话首次使用前 80 秒内功能正常（聊天界面可渲染），之后才被杀——符合"访问触发风控、延迟生效"。对策（已全部落地）：① 本地扫码脚本 `keepalive.js` 扫码成功后写仓库变量 `LAST_RESCAN_UTC`（UTC 时间戳）；② catchup 在硬化期（距标记 <6h）内拒绝 dispatch；③ 操作规则：**重新扫码后 6 小时内不要手动触发任何使用 cookies 的 GitHub 工作流**。注意 GitHub cron 漂移可能让 catchup 在非计划时刻触发（08-27 实测 20:50/23:13 触发，其中 23:13 一次 dispatch 杀死了 73 分钟前刚扫码的会话）——硬化期保护就是为此设计的。
-   补充（08-28 实测）：① S5 会话首次美国访问在 +3.4min，连登录检查都没通过就被杀（S1/S2 的首次访问能通过登录检查、之后才死，机制细节不确定，安全线只有 ≥6.2h 有存活证据）；② **审批门禁交互**：改 schedule.yml 后工作流被隔离，cron 触发的 run 会排队（实测排队 86 分钟），期间 Approve 会让排队 run 立刻开跑并捕获当时的 cookies——所以**扫码后不要立刻 Approve/等待审批中的 run**，两者叠加等于扫码后立即美国访问；③ 安全扫码窗口：北京 **18:40 之后**扫码（保证次日 00:40 发送距扫码 ≥6h）；白天扫码则只能靠 catchup 硬化期保护兜底（当天 00:40 发送必然失败或杀会话，当天火花由保护期后的 catchup 漂移/兜底抢救，不保证）。
+    > 2026-08-28 说明：08-27 事故曾据此推断“新会话硬化期（扫码后 6h 内美国访问杀会话）”并落地 catchup 硬化期保护，08-28 经复核认为风控假设证据不足（此前 08-02~08-25 自然间隔 14-39h 从未触发该条件，4次小间隔死亡亦可用并发回写等解释），已按早期风格回退该保护，回归早期可验证修复路径。ai-news-douyin 已弃用，不再共享会话。
 
 ## 7. 关键选择器（抖音改版时首要检查点）
 
@@ -154,29 +153,20 @@
 
 ## 11. 继续工作 Prompt（复制给下一个 agent）
 
-> 完整版 prompt 与交接文件见 **HANDOFF-20260828.md §0**（含硬化期规则、三处同步、操作手册引用），两者保持同步。
-> 核心增量（2026-08-28 事故后确立）：新会话硬化期（扫码后 6h 内禁止美国访问，catchup 已内置保护）；
-> 安全扫码窗口北京 18:40 后；扫码后不要立刻 Approve 审批门禁；扫码后同步 ai-news-douyin。
+> 交接以本文件为准；HANDOFF-20260828.md 为 08-27 事故存档（硬化期假设已于 08-28 回退，ai-news 已弃用）。
+> 风格回归早期：只修可复现 bug，小步验证，不加推断性等待。
 
 把下面这段完整发给接手 agent：
 
 ```text
 你在接手一个抖音火花自动续火项目（仓库 Luolingli/DouYinSparkFlow，工作目录 .../DouYinSparkFlow）。
 项目由 GitHub Actions 每天北京时间 00:40（cron "40 16 * * *" UTC）给 10 个好友各发一条"今日火花"消息。
-动手前必须通读仓库根目录 AGENTS.md（长期文档）和 HANDOFF-20260828.md（最近事故复盘+当前待办），
+动手前必须通读仓库根目录 AGENTS.md（长期文档）和 HANDOFF-20260828.md（事故存档），
 重点：核心逻辑 core/tasks.py（搜索直达+滚动兜底）；浏览器必须 timezone_id=Asia/Shanghai；
-当天去重基于聊天面板消息时间（北京时间解析）；同一抖音账号 web 会话全账号唯一（§12）。
+当天去重基于聊天面板消息时间（北京时间解析）；同一会话全账号唯一（§12）。
 
-【最高优先级规则：新会话硬化期】（2026-08-28 事故后确立，违反 = cookies 被抖音风控杀死）
-- 扫码后 6 小时内，禁止任何 GitHub（美国 runner）工作流访问 cookies（主发送/catchup/keepalive/手动 dispatch）。
-- catchup 已内置保护（读仓库变量 LAST_RESCAN_UTC，距扫码 <6h 拒绝 dispatch），手动操作必须自觉遵守。
-- 安全扫码窗口：北京时间 18:40 之后扫码（保证次日 00:40 发送距扫码 ≥6h）。
-  白天扫码可以，但当天 00:40 发送必然失败或杀会话，当天火花靠保护期后的 catchup 兜底（不保证）。
-- 扫码后不要立刻 Approve 审批门禁中排队的 run（Approve 会让排队 run 立刻开跑 = 立即美国访问）。
-- 依据：扫码后 ≤3.4min 美国访问 4/4 死亡；≥6.2h 有存活先例。按 6h 保守边界执行。
-
-【cookies 三处同步】（§12）：本地 ~/.config/douyin_keepalive/cookies.json ↔ GitHub secret COOKIES_SAKURO_MAI（env user-data）↔ ai-news-douyin/data/web_cookies.json。
-本地扫码（bash ~/.config/douyin_keepalive/run.sh）自动完成前两处 + 写 LAST_RESCAN_UTC；第三处必须手动复制（脚本见 HANDOFF §6.3）。
+【cookies 两处同步】（§12，已剔除 ai-news-douyin）：本地 ~/.config/douyin_keepalive/cookies.json ↔ GitHub secret COOKIES_SAKURO_MAI（env user-data）。
+本地扫码（bash ~/.config/douyin_keepalive/run.sh）自动完成两处同步。
 
 硬性约束（用户明确要求）：
 1. 调试/测试发送只允许发给 zjj00000010 和 84611333990 两个人，禁止发给其他好友。
@@ -190,7 +180,6 @@
 - 每天成功标志：日志 "任务完成，共发送 10 条消息，跳过 0 条" + review "10/10 检查通过"
 - gh run list/view --repo Luolingli/DouYinSparkFlow
 - 手动触发：gh workflow run "DouYin Spark Flow Schedule Run" --repo Luolingli/DouYinSparkFlow
-- 硬化期标记：gh api repos/Luolingli/DouYinSparkFlow/actions/variables/LAST_RESCAN_UTC --jq .value
 - 本地扫码：bash ~/.config/douyin_keepalive/run.sh（弹二维码，15 分钟有效；launchd 每 6h 自动跑）
 - 工件：gh run download <id> --repo Luolingli/DouYinSparkFlow -n run-logs
 ```
@@ -199,12 +188,9 @@
 
 *文档维护：任何改变行为的重要改动，请同步更新本文件。*
 
-## 12. 抖音单会话规则（2026-08-17 实测确认，务必遵守）
+## 12. 抖音单会话规则（2026-08-17 实测确认，2026-08-28 更新：已剔除 ai-news-douyin）
 
 - **一个抖音账号同一时间只有一个有效网页会话**：任何一次扫码登录都会签发新 sessionid，旧会话立即失效。
-- 实测案例：ai-news-douyin 项目的 douyin web login 扫码后，本项目的聊天会话 cookies 全部失效（keepalive 也救不回来）。
-- 本项目与 ai-news-douyin **共享同一份会话 cookies**：COOKIES_SAKURO_MAI（secret） ↔ ~/.config/douyin_keepalive/cookies.json ↔ ai-news-douyin 的 data/web_cookies.json。
-- **任何一方重新扫码后，必须把新 cookies 同步到另外两处**（gh secret set COOKIES_SAKURO_MAI --env user-data --repo Luolingli/DouYinSparkFlow + 复制本地文件），否则另一方必挂。
-- 本项目本地扫码（`keepalive.js`）成功后会**自动**写仓库变量 `LAST_RESCAN_UTC`（供 catchup 硬化期保护，见 §6.12）；若通过其他途径更新 cookies，需手动同步该标记（或直接删除该变量——缺失时 catchup 按原逻辑 dispatch）。
-- **扫码后 6 小时内不要手动触发任何使用 cookies 的 GitHub 工作流**（新会话硬化期，见 §6.12）。
+- 本项目会话仅两处同步：`~/.config/douyin_keepalive/cookies.json` ↔ `COOKIES_SAKURO_MAI`（env user-data）。ai-news-douyin 已弃用，不再共享（历史共享关系见 git 历史 2026-08-17）。
+- 本地扫码（`bash ~/.config/douyin_keepalive/run.sh` / `node keepalive.js`）成功后自动写本地文件并 `gh secret set COOKIES_SAKURO_MAI --env user-data`。
 - 日常运行（keepalive 心跳、发布后回写）不会创建新会话，可放心共存；**不要**为了"保险"而主动重新扫码。
